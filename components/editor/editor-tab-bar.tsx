@@ -16,6 +16,7 @@ import {
   X,
   Plus,
   ChevronRight,
+  FolderTree,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -43,6 +44,9 @@ export interface EditorTabBarProps {
   setViewport: (viewport: ViewportMode) => void;
   showTerminal?: boolean;
   onToggleTerminal?: () => void;
+  showFiles?: boolean;
+  onToggleFiles?: () => void;
+  onOpenDiagnostics?: () => void;
 }
 
 function getFileIcon(path: string) {
@@ -95,6 +99,9 @@ export function EditorTabBar({
   setViewport,
   showTerminal,
   onToggleTerminal,
+  showFiles,
+  onToggleFiles,
+  onOpenDiagnostics,
 }: EditorTabBarProps) {
   // Breadcrumb segments derived from activePath
   const breadcrumbs = activePath ? activePath.split('/') : [];
@@ -108,8 +115,24 @@ export function EditorTabBar({
     <div className="flex flex-col border-b border-white/10 bg-[#0c0e1a] select-none shrink-0">
       {/* Upper Row: Tabs Bar & View Switchers */}
       <div className="flex h-10 items-center justify-between px-2 overflow-hidden">
-        {/* Left: Tab Items */}
-        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar max-w-[65%]">
+        {/* Left: File Tree Toggle & Tab Items */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[65%]">
+          {onToggleFiles && (viewMode === 'code' || viewMode === 'split') && (
+            <button
+              type="button"
+              onClick={onToggleFiles}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer border shrink-0 ${
+                showFiles
+                  ? 'bg-white/10 text-white border-white/10'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5 border-transparent'
+              }`}
+              title={showFiles ? 'Hide File Tree' : 'Show File Tree'}
+            >
+              <FolderTree className="h-3.5 w-3.5 text-indigo-400" />
+              <span className="hidden sm:inline font-mono text-[10px]">Files</span>
+            </button>
+          )}
+
           {openTabs.map((path) => {
             const isActive = activePath === path;
             const isDirty = dirtyPaths.has(path);
@@ -229,10 +252,23 @@ export function EditorTabBar({
           <div className="flex items-center rounded-lg border border-white/10 bg-[#0e101f] p-0.5 gap-0.5">
             <button
               type="button"
+              onClick={() => setViewMode('preview')}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                viewMode === 'preview'
+                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Play className="h-3 w-3 text-emerald-400 fill-emerald-400/20" />
+              <span className="hidden md:inline">Preview</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setViewMode('code')}
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
                 viewMode === 'code'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
@@ -242,23 +278,10 @@ export function EditorTabBar({
 
             <button
               type="button"
-              onClick={() => setViewMode('preview')}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                viewMode === 'preview'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <Play className="h-3 w-3 text-emerald-400" />
-              <span className="hidden md:inline">Preview</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => setViewMode('split')}
               className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
                 viewMode === 'split'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
@@ -269,21 +292,19 @@ export function EditorTabBar({
             <button
               type="button"
               onClick={() => {
-                if (onToggleTerminal) {
+                if (onOpenDiagnostics) {
+                  onOpenDiagnostics();
+                } else if (onToggleTerminal) {
                   onToggleTerminal();
                 } else {
                   setViewMode('terminal');
                 }
               }}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                showTerminal || viewMode === 'terminal'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
-              title={showTerminal ? 'Hide Bottom Terminal' : 'Show Bottom Terminal'}
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition text-slate-400 hover:text-white hover:bg-white/5"
+              title="Open Diagnostics & Runtime Logs"
             >
-              <TerminalIcon className="h-3 w-3 text-emerald-400" />
-              <span className="hidden md:inline">Terminal</span>
+              <TerminalIcon className="h-3 w-3 text-slate-400" />
+              <span className="hidden md:inline">Diagnostics</span>
             </button>
           </div>
         </div>

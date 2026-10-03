@@ -1,5 +1,5 @@
 /*! coi-serviceworker - MIT License */
-let coepCredentialless = true;
+let coepCredentialless = false;
 if (typeof window === 'undefined') {
   self.addEventListener('install', () => self.skipWaiting());
   self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
@@ -22,9 +22,17 @@ if (typeof window === 'undefined') {
       return;
     }
 
-    // Do not intercept external OAuth or Supabase Auth endpoints
+    // Do not intercept external OAuth, Supabase Auth, or CloudFront media assets
     const url = new URL(r.url);
-    if (url.hostname.includes('google') || url.hostname.includes('supabase') || url.pathname.startsWith('/api/auth')) {
+    if (
+      url.hostname.includes('google') ||
+      url.hostname.includes('supabase') ||
+      url.hostname.includes('cloudfront.net') ||
+      r.destination === 'video' ||
+      r.destination === 'image' ||
+      r.destination === 'audio' ||
+      url.pathname.startsWith('/api/auth')
+    ) {
       return;
     }
 
@@ -40,6 +48,7 @@ if (typeof window === 'undefined') {
           const newHeaders = new Headers(response.headers);
           newHeaders.set('Cross-Origin-Embedder-Policy', coep);
           newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
+          newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
 
           return new Response(response.body, {
             status: response.status,
@@ -54,34 +63,49 @@ if (typeof window === 'undefined') {
   (() => {
     if (!window.location.pathname.startsWith('/editor')) return;
 
-    if (window.crossOriginIsolated) return;
+    if (window.crossOriginIsolated) {
+      window.sessionStorage.removeItem('coiReloadedBySelf');
+      // If server already provides COOP/COEP, deregister worker to prevent request overhead
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((reg) => {
+            if (reg.scope.includes('/editor')) {
+              void reg.unregister();
+            }
+          });
+        });
+      }
+      return;
+    }
 
     if (!window.isSecureContext) {
       return;
     }
 
-    if (!navigator.serviceWorker) {
+    const reloadedBySelf = window.sessionStorage.getItem('coiReloadedBySelf');
+
+    // If server provides headers on hard reload, reload once to pick them up
+    if (!reloadedBySelf) {
+      window.sessionStorage.setItem('coiReloadedBySelf', 'true');
+      window.location.reload();
       return;
     }
 
-    const reloadedBySelf = window.sessionStorage.getItem('coiReloadedBySelf');
+    // Fallback: If hard reload still didn't isolate (e.g. proxy environment), register service worker
+    if (!navigator.serviceWorker) {
+      return;
+    }
 
     navigator.serviceWorker
       .register('/coi-serviceworker.js', { scope: '/editor' })
       .then(
         (registration) => {
           registration.addEventListener('updatefound', () => {
-            if (!reloadedBySelf) {
-              window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-              window.location.reload();
-            }
+            window.location.reload();
           });
 
           if (registration.active && !navigator.serviceWorker.controller) {
-            if (!reloadedBySelf) {
-              window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-              window.location.reload();
-            }
+            window.location.reload();
           }
         },
         (err) => {

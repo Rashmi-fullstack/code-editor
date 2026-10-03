@@ -30,6 +30,7 @@ export interface ProductPlan {
     purpose: string;
     valueProposition: string;
     targetOutcome: string;
+    workspaceName?: string;
   };
   personas: Array<{
     role: string;
@@ -71,13 +72,19 @@ export interface ProductPlan {
   };
 }
 
+export interface ProductPlannerOptions {
+  aiConfig?: { apiKey: string; model?: string; providerId?: string; keySource?: string };
+  onUsage?: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
+}
+
 export async function runProductManagerAgent(
   idea: string,
-  existingFilePaths: string[]
+  existingFilePaths: string[],
+  options?: ProductPlannerOptions
 ): Promise<ProductPlan> {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.');
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const key = options?.aiConfig?.apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
+  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env or add your personal API key in Profile.');
+  const model = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const system = `You are a Principal AI Product Manager and Systems Architect.
 Analyze the user's product idea and existing project files, and return a comprehensive, structured product development specification covering all 11 core product planning areas.
@@ -203,7 +210,20 @@ Make development tasks modular, actionable, and ready to dispatch to the Coding 
 
   const payload = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: {
+      candidatesTokenCount?: number;
+      promptTokenCount?: number;
+      totalTokenCount?: number;
+    };
   };
+
+  if (options?.onUsage && payload.usageMetadata) {
+    const inputTokens = payload.usageMetadata.promptTokenCount ?? 0;
+    const outputTokens = payload.usageMetadata.candidatesTokenCount ?? 0;
+    const totalTokens = payload.usageMetadata.totalTokenCount ?? (inputTokens + outputTokens);
+    options.onUsage({ inputTokens, outputTokens, totalTokens });
+  }
+
   const text = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
   if (!text) throw new Error('Gemini returned empty product plan.');
 

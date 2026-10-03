@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database, DbProductPlan, DbProductTask, DbAgentRun } from '../types/database';
+import type { Database, Json } from '../types/database';
 import type { ProductPlan, DevelopmentTask } from '../ai/product-planner';
 
 export async function getProductPlanFromDb(
@@ -35,29 +35,47 @@ export async function getProductPlanFromDb(
       id: t.id,
       title: t.title,
       description: t.description,
-      type: (t.type as string) || 'component',
-      category: (t.type as any) || 'component',
-      priority: (t.priority as any) || 'medium',
-      status: (t.status as any) || 'todo',
+      type: t.type || 'component',
+      category: (t.type as DevelopmentTask['category']) || 'component',
+      priority: (t.priority as DevelopmentTask['priority']) || 'medium',
+      status: (t.status as DevelopmentTask['status']) || 'todo',
       requirements: t.requirements || '',
-      acceptanceCriteria: Array.isArray(t.acceptance_criteria) ? (t.acceptance_criteria as string[]) : [],
-      technicalPlan: (t.technical_plan as any) || {},
-      affectedFiles: Array.isArray(t.affected_files) ? (t.affected_files as string[]) : [],
-      dependencies: Array.isArray(t.dependencies) ? (t.dependencies as string[]) : [],
+      acceptanceCriteria: Array.isArray(t.acceptance_criteria)
+        ? (t.acceptance_criteria as unknown as string[])
+        : [],
+      technicalPlan: (t.technical_plan as unknown as DevelopmentTask['technicalPlan']) || {},
+      affectedFiles: Array.isArray(t.affected_files)
+        ? (t.affected_files as unknown as string[])
+        : [],
+      dependencies: Array.isArray(t.dependencies)
+        ? (t.dependencies as unknown as string[])
+        : [],
     }));
 
+    const planRowRecord = planRow as unknown as Record<string, unknown>;
     const fullPlan: ProductPlan = {
-      overview: (planRow as any).overview || { summary: '', targetAudience: '', keyDifferentiator: '' },
-      vision: planRow.vision as any,
-      personas: planRow.personas as any,
-      mvp: planRow.mvp as any,
-      features: planRow.features as any,
-      userStories: (planRow as any).user_stories || [],
-      acceptanceCriteria: (planRow as any).acceptance_criteria || [],
-      roadmap: planRow.roadmap as any,
+      overview: (planRowRecord.overview as ProductPlan['overview']) || {
+        summary: '',
+        targetAudience: '',
+        keyDifferentiator: '',
+      },
+      vision: planRow.vision as unknown as ProductPlan['vision'],
+      personas: (planRow.personas as unknown as ProductPlan['personas']) || [],
+      mvp: (planRow.mvp as unknown as ProductPlan['mvp']) || { mustHave: [], exclusions: [] },
+      features: (planRow.features as unknown as ProductPlan['features']) || [],
+      userStories: (planRowRecord.user_stories as ProductPlan['userStories']) || [],
+      acceptanceCriteria: (planRowRecord.acceptance_criteria as ProductPlan['acceptanceCriteria']) || [],
+      roadmap: (planRow.roadmap as unknown as ProductPlan['roadmap']) || [],
       developmentTasks: tasks,
-      requirements: (planRow as any).requirements || { functional: [], nonFunctional: [] },
-      research: (planRow as any).research || { marketAnalysis: '', competitiveBenchmarks: [], userInsights: [] },
+      requirements: (planRowRecord.requirements as ProductPlan['requirements']) || {
+        functional: [],
+        nonFunctional: [],
+      },
+      research: (planRowRecord.research as ProductPlan['research']) || {
+        marketAnalysis: '',
+        competitiveBenchmarks: [],
+        userInsights: [],
+      },
     };
 
     return { plan: fullPlan, tasks, error: null };
@@ -77,11 +95,11 @@ export async function saveProductPlanToDb(
       .upsert(
         {
           project_id: projectId,
-          vision: plan.vision as any,
-          personas: plan.personas as any,
-          mvp: plan.mvp as any,
-          features: plan.features as any,
-          roadmap: plan.roadmap as any,
+          vision: plan.vision as unknown as Json,
+          personas: plan.personas as unknown as Json,
+          mvp: plan.mvp as unknown as Json,
+          features: plan.features as unknown as Json,
+          roadmap: plan.roadmap as unknown as Json,
         },
         { onConflict: 'project_id' }
       )
@@ -99,14 +117,14 @@ export async function saveProductPlanToDb(
         product_plan_id: savedPlan.id,
         title: t.title,
         description: t.description,
-        type: t.category,
+        type: t.category || 'component',
         priority: t.priority || 'medium',
         status: t.status || 'todo',
         requirements: t.requirements || null,
-        acceptance_criteria: t.acceptanceCriteria as any,
-        technical_plan: (t.technicalPlan || {}) as any,
-        affected_files: (t.affectedFiles || []) as any,
-        dependencies: (t.dependencies || []) as any,
+        acceptance_criteria: t.acceptanceCriteria as unknown as Json,
+        technical_plan: (t.technicalPlan || {}) as unknown as Json,
+        affected_files: (t.affectedFiles || []) as unknown as Json,
+        dependencies: (t.dependencies || []) as unknown as Json,
       }));
 
       await supabase.from('product_tasks').upsert(taskPayloads);
@@ -140,8 +158,8 @@ export async function recordAgentRunInDb(
         agent_type: run.agentType,
         status: run.status,
         current_step: run.currentStep || null,
-        input: (run.input || {}) as any,
-        output: (run.output || {}) as any,
+        input: (run.input || {}) as unknown as Json,
+        output: (run.output || {}) as unknown as Json,
         error: run.error || null,
       })
       .select('id')
@@ -151,5 +169,20 @@ export async function recordAgentRunInDb(
     return { id: data.id, error: null };
   } catch (err) {
     return { id: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}export async function updateTaskStatusInDb(
+  supabase: SupabaseClient<Database>,
+  taskId: string,
+  status: 'todo' | 'in-progress' | 'completed' | 'blocked'
+): Promise<{ success: boolean; error: Error | null }> {
+  try {
+    const { error } = await supabase
+      .from('product_tasks')
+      .update({ status })
+      .eq('id', taskId);
+    if (error) return { success: false, error: new Error(error.message) };
+    return { success: true, error: null };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
   }
 }

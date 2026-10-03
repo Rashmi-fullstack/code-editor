@@ -36,15 +36,16 @@ const SHIM_NEXT_LINK = `
 import React from 'react';
 
 export function Link({ href, children, className, onClick, ...rest }: any) {
+  const hrefStr = typeof href === 'object' && href !== null ? (href.pathname || '') : String(href || '');
   return (
     <a
-      href={href || '#'}
+      href={hrefStr || '#'}
       className={className}
       onClick={(e) => {
         if (onClick) onClick(e);
-        if (!href || href.startsWith('#') || !href.startsWith('http')) {
+        if (!hrefStr || hrefStr.startsWith('#') || !hrefStr.startsWith('http')) {
           e.preventDefault();
-          console.log('[Preview Navigation] Clicked Link to:', href);
+          console.log('[Preview Navigation] Clicked Link to:', hrefStr);
         }
       }}
       {...rest}
@@ -117,23 +118,25 @@ export function notFound() {
 `;
 
 const SHIM_NEXT_ROUTER = `
+const routerInstance = {
+  route: '/',
+  pathname: '/',
+  query: {},
+  asPath: '/',
+  push: (url: string) => console.log('[Preview Router.push]:', url),
+  replace: (url: string) => console.log('[Preview Router.replace]:', url),
+  reload: () => console.log('[Preview Router.reload]'),
+  back: () => console.log('[Preview Router.back]'),
+  prefetch: () => Promise.resolve(),
+  events: {
+    on: () => {},
+    off: () => {},
+    emit: () => {},
+  },
+};
+
 export function useRouter() {
-  return {
-    route: '/',
-    pathname: '/',
-    query: {},
-    asPath: '/',
-    push: (url: string) => console.log('[Preview Router.push]:', url),
-    replace: (url: string) => console.log('[Preview Router.replace]:', url),
-    reload: () => console.log('[Preview Router.reload]'),
-    back: () => console.log('[Preview Router.back]'),
-    prefetch: () => Promise.resolve(),
-    events: {
-      on: () => {},
-      off: () => {},
-      emit: () => {},
-    },
-  };
+  return routerInstance;
 }
 
 export function withRouter(Component: any) {
@@ -142,7 +145,7 @@ export function withRouter(Component: any) {
   };
 }
 
-export default { useRouter, withRouter };
+export default { ...routerInstance, useRouter, withRouter };
 `;
 
 const SHIM_NEXT_FONT = `

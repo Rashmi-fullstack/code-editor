@@ -15,6 +15,9 @@ export type Database = {
           email: string;
           full_name: string | null;
           avatar_url: string | null;
+          credit_limit: number;
+          credits_used: number;
+          credits_reserved: number;
           created_at: string;
           updated_at: string;
         };
@@ -23,6 +26,9 @@ export type Database = {
           email: string;
           full_name?: string | null;
           avatar_url?: string | null;
+          credit_limit?: number;
+          credits_used?: number;
+          credits_reserved?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -31,6 +37,9 @@ export type Database = {
           email?: string;
           full_name?: string | null;
           avatar_url?: string | null;
+          credit_limit?: number;
+          credits_used?: number;
+          credits_reserved?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -324,6 +333,93 @@ export type Database = {
         };
         Relationships: [];
       };
+      user_ai_keys: {
+        Row: {
+          id: string;
+          user_id: string;
+          provider: string;
+          model: string;
+          encrypted_key: string;
+          key_hint: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          provider?: string;
+          model?: string;
+          encrypted_key: string;
+          key_hint?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          provider?: string;
+          model?: string;
+          encrypted_key?: string;
+          key_hint?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ai_token_usage: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string | null;
+          provider: string;
+          model: string;
+          operation: string;
+          input_tokens: number;
+          output_tokens: number;
+          total_tokens: number;
+          key_source: string;
+          success: boolean;
+          credit_used: number;
+          latency_ms: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id?: string | null;
+          provider: string;
+          model: string;
+          operation: string;
+          input_tokens?: number;
+          output_tokens?: number;
+          total_tokens?: number;
+          key_source?: string;
+          success?: boolean;
+          credit_used?: number;
+          latency_ms?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          project_id?: string | null;
+          provider?: string;
+          model?: string;
+          operation?: string;
+          input_tokens?: number;
+          output_tokens?: number;
+          total_tokens?: number;
+          key_source?: string;
+          success?: boolean;
+          credit_used?: number;
+          latency_ms?: number | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -331,6 +427,18 @@ export type Database = {
     Functions: {
       apply_ai_generation: {
         Args: { p_project_id: string; p_operations: Json; p_dependencies?: Json };
+        Returns: undefined;
+      };
+      reserve_user_credit: {
+        Args: { p_user_id: string; p_limit?: number };
+        Returns: boolean;
+      };
+      finalize_user_credit: {
+        Args: { p_user_id: string; p_success: boolean };
+        Returns: undefined;
+      };
+      release_user_credit: {
+        Args: { p_user_id: string };
         Returns: undefined;
       };
     };
@@ -352,3 +460,5 @@ export type DbProductPlan = Database['public']['Tables']['product_plans']['Row']
 export type DbProductTask = Database['public']['Tables']['product_tasks']['Row'];
 export type DbAgentRun = Database['public']['Tables']['agent_runs']['Row'];
 export type DbProjectEmbedding = Database['public']['Tables']['project_embeddings']['Row'];
+export type DbUserAiKey = Database['public']['Tables']['user_ai_keys']['Row'];
+export type DbAiTokenUsage = Database['public']['Tables']['ai_token_usage']['Row'];

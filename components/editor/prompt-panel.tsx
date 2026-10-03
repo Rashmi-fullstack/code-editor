@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
+import { DEVELOPER_IDE_CONFIG } from '@/lib/ai/developer-ide-config';
 
 export type AiMode = 'build' | 'code' | 'debug';
 
@@ -110,7 +111,7 @@ export function PromptPanel({
             variant="outline"
             className="border-indigo-500/30 bg-indigo-500/10 text-[10px] text-indigo-300 py-0"
           >
-            Gemini Flash
+            {DEVELOPER_IDE_CONFIG.displayName}
           </Badge>
         </div>
 

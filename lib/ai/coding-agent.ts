@@ -1,4 +1,6 @@
 import type { ProjectFile } from '@/lib/types/database';
+import { HfInference } from '@huggingface/inference';
+import { DEVELOPER_IDE_CONFIG } from './developer-ide-config';
 
 export type FileOperation =
   | { type: 'create' | 'update'; path: string; content: string; language?: string }
@@ -9,6 +11,9 @@ export type AgentResult = {
   summary: string;
   operations: FileOperation[];
   dependencies?: Array<{ name: string; version: string }>;
+  assets?: Array<{ id: string; type: string; description: string; path?: string }>;
+  plan?: string[];
+  cleanupReport?: { removedFiles: string[]; removedDeps: string[] };
 };
 
 export class GeminiUnavailableError extends Error {
@@ -31,8 +36,60 @@ export class GeminiQuotaError extends Error {
   }
 }
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+export class HuggingFaceUnavailableError extends Error {
+  status = 503;
+  constructor(
+    message = 'Hugging Face Inference Provider is temporarily unavailable. Please retry.'
+  ) {
+    super(message);
+    this.name = 'HuggingFaceUnavailableError';
+  }
+}
+
+export class HuggingFaceQuotaError extends Error {
+  status = 402;
+  constructor(
+    message = 'Hugging Face API credits or balance is insufficient. Please check billing or token settings.'
+  ) {
+    super(message);
+    this.name = 'HuggingFaceQuotaError';
+  }
+}
+
+export class HuggingFaceAuthError extends Error {
+  status = 401;
+  constructor(
+    message = 'Hugging Face API authentication failed. Check the server-side HF_TOKEN configuration.'
+  ) {
+    super(message);
+    this.name = 'HuggingFaceAuthError';
+  }
+}
+
+export class HuggingFaceRateLimitError extends Error {
+  status = 429;
+  constructor(
+    message = 'Hugging Face API rate limit reached. Please retry shortly.'
+  ) {
+    super(message);
+    this.name = 'HuggingFaceRateLimitError';
+  }
+}
+
+export class MalformedAIResponseError extends Error {
+  status = 422;
+  constructor(
+    message = 'AI returned an invalid project response. Retrying with a safer generation format.'
+  ) {
+    super(message);
+    this.name = 'MalformedAIResponseError';
+  }
+}
+
+export const DEFAULT_GEMINI_MODEL = DEVELOPER_IDE_CONFIG.fallbackModel;
+export const DEFAULT_HF_MODEL = DEVELOPER_IDE_CONFIG.model;
 export const MAX_GEMINI_RETRIES = 3;
+export const MAX_HF_RETRIES = 3;
 
 const NPM_PACKAGE_NAME_REGEX = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i;
 
@@ -45,8 +102,317 @@ function cleanPath(raw: string): string {
     .trim();
 }
 
+function sanitizeGeneratedContent(path: string, content: string): string {
+  if (!content || !/\.(tsx|jsx|ts|js)$/.test(path)) return content;
+
+  let next = content;
+
+  // Fix any accidental bare Example identifiers in hook dependencies or expressions
+  next = next.replace(/,\s*Example\s*\)/g, ', [])');
+
+  // Prevent non-deterministic values from causing hydration drift in generated pages
+  next = next.replace(/Math\.random\s*\(/g, '0');
+  next = next.replace(/Date\.now\s*\(/g, '1700000000000');
+  next = next.replace(/new Date\s*\(\s*\)/g, 'new Date("2025-01-01T00:00:00.000Z")');
+  next = next.replace(/\.toLocaleDateString\s*\(\s*\)/g, '.toLocaleDateString()');
+  next = next.replace(/toLocaleDateString\s*\(\s*\)/g, '"Jan 1, 2025"');
+
+  if (/^(app\/page\.(tsx|jsx)|pages\/index\.(tsx|jsx))$/.test(path)) {
+    const prefersRoot = /(return\s*\(\s*<)(main|div|section|article)/m;
+    if (prefersRoot.test(next) && !/suppressHydrationWarning/.test(next)) {
+      next = next.replace(/<(main|div|section|article)\b/g, '<$1 suppressHydrationWarning');
+    }
+  }
+
+  if (/^(app\/layout\.(tsx|jsx)|pages\/_app\.(tsx|jsx))$/.test(path) && !/suppressHydrationWarning/.test(next)) {
+    next = next.replace(/<body\b/g, '<body suppressHydrationWarning');
+  }
+
+  return next;
+}
+
+function assertCompleteProjectScaffold(paths: string[], existingFiles: ProjectFile[] = []) {
+  const combined = [
+    ...paths,
+    ...existingFiles.filter((f) => !f.is_folder).map((f) => cleanPath(f.path)),
+  ];
+
+  const relevant = combined.filter(
+    (path) =>
+      path === 'package.json' ||
+      path.endsWith('/package.json') ||
+      path.startsWith('app/') ||
+      path.startsWith('src/') ||
+      path === 'index.html' ||
+      path.endsWith('/index.html') ||
+      path === 'vite.config.ts' ||
+      path.endsWith('/vite.config.ts') ||
+      path === 'next.config.ts' ||
+      path.endsWith('/next.config.ts') ||
+      path === 'next.config.mjs' ||
+      path.endsWith('/next.config.mjs') ||
+      path === 'next.config.js' ||
+      path.endsWith('/next.config.js')
+  );
+
+  if (relevant.length === 0) return;
+
+  const hasPackage = relevant.some((path) => path === 'package.json' || path.endsWith('/package.json'));
+  const hasEntry = relevant.some((path) => {
+    const normalized = path.replace(/^.*\//, '');
+    return (
+      normalized === 'page.tsx' ||
+      normalized === 'page.jsx' ||
+      normalized === 'page.js' ||
+      normalized === 'App.tsx' ||
+      normalized === 'App.jsx' ||
+      normalized === 'main.tsx' ||
+      normalized === 'main.jsx' ||
+      normalized === 'index.html'
+    );
+  });
+  const hasNextAppRouterLayout = relevant.some((path) => /(^|\/)layout\.(tsx|jsx|ts|js)$/.test(path));
+
+  if (!hasPackage) {
+    throw new Error('Incomplete project scaffold: missing required package.json file.');
+  }
+
+  if (!hasEntry) {
+    throw new Error('Incomplete project scaffold: missing the app entry file (app/page.tsx, src/App.tsx, or index.html).');
+  }
+
+  if ((relevant.some((path) => path.startsWith('app/')) || relevant.some((path) => path.includes('/app/'))) && !hasNextAppRouterLayout) {
+    throw new Error('Incomplete project scaffold: missing app/layout.tsx required for a valid Next.js app-router project.');
+  }
+}
+
+function assertValidPackageJson(path: string, content: string) {
+  const pkgPath = cleanPath(path);
+  const isPackageJson = pkgPath === 'package.json' || pkgPath.endsWith('/package.json');
+  if (!isPackageJson) return;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new Error(`Invalid package.json syntax at ${pkgPath}.`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Invalid package.json at ${pkgPath}.`);
+  }
+
+  const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+  const version = typeof parsed.version === 'string' ? parsed.version.trim() : '';
+  if (!name) throw new Error(`Invalid package.json at ${pkgPath}: missing a valid name field.`);
+  if (!version || !/^\d+\.\d+\.\d+([-.A-Za-z0-9]+)?$/.test(version)) {
+    throw new Error(`Invalid package.json at ${pkgPath}: version must be a valid semver string, not "${version || 'undefined'}".`);
+  }
+
+  const scripts = (parsed.scripts ?? {}) as Record<string, unknown>;
+  const deps = { ...(parsed.dependencies ?? {}), ...(parsed.devDependencies ?? {}) } as Record<string, unknown>;
+  const hasNextDependency = Boolean(deps.next);
+  if (hasNextDependency) {
+    if (typeof scripts.dev !== 'string' || typeof scripts.build !== 'string' || typeof scripts.start !== 'string') {
+      throw new Error(`Invalid package.json at ${pkgPath}: Next.js projects require dev, build, and start scripts.`);
+    }
+  }
+}
+
+export function auditAndCleanupProject(
+  operations: FileOperation[],
+  existingFiles: ProjectFile[],
+  dependencies: Array<{ name: string; version: string }> = []
+): {
+  operations: FileOperation[];
+  dependencies: Array<{ name: string; version: string }>;
+  cleanupReport: { removedFiles: string[]; removedDeps: string[] };
+} {
+  const removedFiles: string[] = [];
+  const removedDeps: string[] = [];
+
+  // Build the state of files after applying the operations
+  const fileMap = new Map<string, string>();
+  for (const f of existingFiles) {
+    if (!f.is_folder && f.content !== undefined) {
+      fileMap.set(f.path, f.content);
+    }
+  }
+  for (const op of operations) {
+    if (op.type === 'create' || op.type === 'update') {
+      fileMap.set(op.path, op.content);
+    } else if (op.type === 'delete') {
+      fileMap.delete(op.path);
+    } else if (op.type === 'rename') {
+      const prev = fileMap.get(op.path);
+      fileMap.delete(op.path);
+      if (prev !== undefined) {
+        fileMap.set(op.newPath, prev);
+      }
+    }
+  }
+
+  // 1. Audit and clean package.json dependencies
+  const PROTECTED_PACKAGES = new Set([
+    'next',
+    'react',
+    'react-dom',
+    '@next/swc-wasm-nodejs',
+    'typescript',
+    '@types/node',
+    '@types/react',
+    '@types/react-dom',
+    'tailwindcss',
+    'postcss',
+    'autoprefixer',
+    'eslint',
+    'eslint-config-next',
+    'lucide-react',
+  ]);
+
+  const pkgJsonRaw = fileMap.get('package.json');
+  let nextDependencies = Array.isArray(dependencies) ? [...dependencies] : [];
+
+  if (pkgJsonRaw) {
+    try {
+      const parsed = JSON.parse(pkgJsonRaw) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+        [k: string]: unknown;
+      };
+
+      const allCode = Array.from(fileMap.entries())
+        .filter(([p]) => p !== 'package.json' && !p.endsWith('.lock') && !p.endsWith('.json'))
+        .map(([, c]) => c)
+        .join('\n');
+
+      let pkgModified = false;
+
+      const checkAndCleanDepMap = (depsObj?: Record<string, string>) => {
+        if (!depsObj) return;
+        for (const depName of Object.keys(depsObj)) {
+          if (PROTECTED_PACKAGES.has(depName)) continue;
+
+          // Check if package is referenced in code: from 'dep', from "dep", require('dep'), import('dep')
+          const escaped = depName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`['"]${escaped}(?:/[^'"]*)?['"]`, 'i');
+          const isUsed = regex.test(allCode);
+
+          if (!isUsed) {
+            delete depsObj[depName];
+            removedDeps.push(depName);
+            pkgModified = true;
+          }
+        }
+      };
+
+      checkAndCleanDepMap(parsed.dependencies);
+      checkAndCleanDepMap(parsed.devDependencies);
+
+      if (pkgModified) {
+        const cleanedPkg = JSON.stringify(parsed, null, 2);
+        fileMap.set('package.json', cleanedPkg);
+
+        // Update or add the package.json operation
+        const existingPkgOpIndex = operations.findIndex((op) => op.path === 'package.json');
+        if (existingPkgOpIndex !== -1) {
+          operations[existingPkgOpIndex] = {
+            type: 'update',
+            path: 'package.json',
+            content: cleanedPkg,
+            language: 'json',
+          };
+        } else {
+          operations.push({
+            type: 'update',
+            path: 'package.json',
+            content: cleanedPkg,
+            language: 'json',
+          });
+        }
+
+        // Also clean up dependencies list
+        nextDependencies = nextDependencies.filter((d) => !removedDeps.includes(d.name));
+      }
+    } catch (e) {
+      console.warn('[Audit] package.json parse error during cleanup:', e);
+    }
+  }
+
+  // 2. Audit and clean obsolete / abandoned files
+  const PROTECTED_FILE_PATTERNS = [
+    /^app\/layout\.(tsx|jsx|ts|js)$/,
+    /^app\/page\.(tsx|jsx|ts|js)$/,
+    /^app\/globals\.css$/,
+    /^app\/favicon\.ico$/,
+    /^app\/.*\/page\.(tsx|jsx|ts|js)$/,
+    /^app\/.*\/layout\.(tsx|jsx|ts|js)$/,
+    /^app\/.*\/route\.(ts|js)$/,
+    /^app\/.*\/loading\.(tsx|jsx|ts|js)$/,
+    /^app\/.*\/error\.(tsx|jsx|ts|js)$/,
+    /^app\/.*\/not-found\.(tsx|jsx|ts|js)$/,
+    /^pages\//,
+    /^public\//,
+    /^package\.json$/,
+    /^tsconfig\.json$/,
+    /^next\.config\./,
+    /^vite\.config\./,
+    /^index\.html$/,
+    /^\.env/,
+    /^README\.md$/i,
+    /^tailwind\.config\./,
+    /^postcss\.config\./,
+  ];
+
+  const newlyCreatedPaths = new Set(
+    operations.filter((op) => op.type === 'create').map((op) => op.path)
+  );
+
+  const candidatePaths = Array.from(fileMap.keys()).filter((path) => {
+    if (newlyCreatedPaths.has(path)) return false;
+    if (PROTECTED_FILE_PATTERNS.some((pat) => pat.test(path))) return false;
+    return path.startsWith('components/') || path.startsWith('lib/') || path.startsWith('utils/') || path.startsWith('hooks/');
+  });
+
+  const allRemainingCode = Array.from(fileMap.entries())
+    .map(([p, c]) => ({ path: p, content: c }));
+
+  for (const candPath of candidatePaths) {
+    const fileBase = candPath.split('/').pop()?.replace(/\.(tsx|jsx|ts|js)$/, '') || '';
+    if (!fileBase) continue;
+
+    // Check if any other file imports candPath
+    const isImported = allRemainingCode.some(({ path, content }) => {
+      if (path === candPath) return false;
+      const cleanCand = candPath.replace(/\.(tsx|jsx|ts|js)$/, '');
+      return (
+        content.includes(cleanCand) ||
+        content.includes(`/${fileBase}`) ||
+        content.includes(`'./${fileBase}'`) ||
+        content.includes(`"${fileBase}"`) ||
+        content.includes(`'@/components/${fileBase}'`) ||
+        content.includes(`"@/components/${fileBase}"`)
+      );
+    });
+
+    if (!isImported) {
+      operations.push({
+        type: 'delete',
+        path: candPath,
+      });
+      removedFiles.push(candPath);
+    }
+  }
+
+  return {
+    operations,
+    dependencies: nextDependencies,
+    cleanupReport: { removedFiles, removedDeps },
+  };
+}
+
 export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]): AgentResult {
-  if (!input || typeof input !== 'object') throw new Error('Gemini returned an invalid response.');
+  if (!input || typeof input !== 'object') throw new Error('AI returned an invalid response.');
   const result = input as Partial<AgentResult>;
   const summary =
     typeof result.summary === 'string' && result.summary.trim()
@@ -54,7 +420,7 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
       : 'Project files generated successfully.';
 
   if (!Array.isArray(result.operations)) {
-    throw new Error('Gemini response did not include a change plan.');
+    throw new Error('AI response did not include a change plan.');
   }
 
   // Filter out directory entries and invalid operations
@@ -97,6 +463,106 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
     }
   }
 
+  // Normalize paths removing any common top-level prefix
+  for (const op of rawOps) {
+    const o = op as Record<string, unknown>;
+    let p = cleanPath(o.path as string);
+    if (commonPrefix && p.startsWith(commonPrefix)) {
+      p = p.slice(commonPrefix.length);
+    }
+    o.path = cleanPath(p);
+  }
+
+  const existingFilePaths = new Set(existingFiles.filter((f) => !f.is_folder).map((f) => cleanPath(f.path)));
+  const opPaths = new Set(rawOps.map((op) => cleanPath((op as Record<string, unknown>).path as string)));
+
+  const hasPackage =
+    opPaths.has('package.json') ||
+    existingFilePaths.has('package.json') ||
+    Array.from(opPaths).some((p) => p.endsWith('/package.json')) ||
+    Array.from(existingFilePaths).some((p) => p.endsWith('/package.json'));
+
+  const hasNextApp =
+    Array.from(opPaths).some((p) => p.startsWith('app/') || p.includes('/app/')) ||
+    Array.from(existingFilePaths).some((p) => p.startsWith('app/') || p.includes('/app/'));
+
+  // Auto-scaffold package.json if creating or editing Next.js project and missing
+  if (!hasPackage && hasNextApp) {
+    rawOps.unshift({
+      type: 'create',
+      path: 'package.json',
+      content: JSON.stringify(
+        {
+          name: 'codatron-app',
+          version: '0.1.0',
+          private: true,
+          scripts: {
+            dev: 'next dev',
+            build: 'next build',
+            start: 'next start',
+          },
+          dependencies: {
+            next: '14.2.24',
+            react: '^18.3.1',
+            'react-dom': '^18.3.1',
+            '@next/swc-wasm-nodejs': '14.2.24',
+            'lucide-react': '^0.460.0',
+          },
+          devDependencies: {
+            typescript: '^5.4.5',
+            '@types/node': '^20.12.7',
+            '@types/react': '^18.3.1',
+            '@types/react-dom': '^18.3.0',
+            tailwindcss: '^3.4.1',
+            postcss: '^8.4.38',
+            autoprefixer: '^10.4.19',
+          },
+        },
+        null,
+        2
+      ),
+    });
+    opPaths.add('package.json');
+  }
+
+  const hasLayout =
+    Array.from(opPaths).some((p) => /(^|\/)layout\.(tsx|jsx|ts|js)$/.test(p)) ||
+    Array.from(existingFilePaths).some((p) => /(^|\/)layout\.(tsx|jsx|ts|js)$/.test(p));
+
+  // Auto-scaffold app/layout.tsx if missing in Next.js app
+  if (!hasLayout && hasNextApp) {
+    rawOps.push({
+      type: 'create',
+      path: 'app/layout.tsx',
+      content: `import './globals.css';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Codatron Application',
+  description: 'Built with Codatron AI',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en" className="dark">
+      <body suppressHydrationWarning className="bg-[#0b0c16] text-white antialiased">
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
+    });
+    opPaths.add('app/layout.tsx');
+  }
+
+  // Assert scaffold validity taking existing files into account
+  assertCompleteProjectScaffold(Array.from(opPaths), existingFiles);
+
   const known = new Set(existingFiles.filter((file) => !file.is_folder).map((file) => file.path));
   const opsByPath = new Map<string, FileOperation>();
 
@@ -124,9 +590,26 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
       if (typeof typed.content !== 'string') {
         typed.content = '';
       }
+      typed.content = sanitizeGeneratedContent(typed.path, typed.content);
+      if (typed.path === 'package.json' || typed.path.endsWith('/package.json')) {
+        assertValidPackageJson(typed.path, typed.content);
+      }
       if (typed.content.length > 250_000) {
         throw new Error(`Invalid content length for ${typed.path}.`);
       }
+      // Heuristic duplicate prevention: detect duplicate suffix patterns like Foo2.tsx, FooNew.tsx, Foo_updated.tsx
+      if (typed.type === 'create' && !known.has(typed.path)) {
+        const baseMatch = typed.path.match(/^(.*?)[\-_]?(?:2|new|updated|v2|copy)\.(tsx?|jsx?|css|json)$/i);
+        if (baseMatch) {
+          const basePath = `${baseMatch[1]}.${baseMatch[2]}`;
+          if (known.has(basePath)) {
+            // Retarget to update the original file instead of creating duplicate
+            typed.path = basePath;
+            typed.type = 'update';
+          }
+        }
+      }
+
       // Smart healing: adjust create <-> update based on existing files in project
       if (typed.type === 'create' && known.has(typed.path)) {
         typed.type = 'update';
@@ -155,12 +638,12 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
     }
   }
 
-  const operations = Array.from(opsByPath.values());
-  if (operations.length === 0) {
+  const rawOperations = Array.from(opsByPath.values());
+  if (rawOperations.length === 0) {
     throw new Error('No valid file operations could be extracted.');
   }
 
-  const dependencies = (result.dependencies ?? [])
+  const rawDependencies = (result.dependencies ?? [])
     .filter((dep) => Boolean(dep && typeof dep.name === 'string' && NPM_PACKAGE_NAME_REGEX.test(dep.name.trim())))
     .map((dependency) => {
       const version =
@@ -168,7 +651,28 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
       return { name: dependency.name.trim(), version };
     });
 
-  return { summary, operations, dependencies };
+  // Extract or synthesize progressive execution plan
+  const plan: string[] = Array.isArray(result.plan) && result.plan.length > 0
+    ? result.plan.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [
+      'Analyzed project requirements',
+      ...rawOperations.map(
+        (op) =>
+          `${op.type === 'create' ? 'Create' : op.type === 'update' ? 'Update' : op.type === 'delete' ? 'Remove' : 'Rename'} ${op.path}`
+      ),
+      'Configure dependencies & verify live preview',
+    ];
+
+  // Perform automatic dependency & unused file cleanup pass
+  const cleaned = auditAndCleanupProject(rawOperations, existingFiles, rawDependencies);
+
+  return {
+    summary,
+    operations: cleaned.operations,
+    dependencies: cleaned.dependencies,
+    plan,
+    cleanupReport: cleaned.cleanupReport,
+  };
 }
 
 const PATH_PATTERN = /^[a-zA-Z0-9_\-./@]+$/;
@@ -186,7 +690,8 @@ export function selectProjectContext(
   activePath?: string,
   selectedCode?: string,
   previewError?: string,
-  mode?: 'build' | 'code' | 'debug'
+  mode?: 'build' | 'code' | 'debug',
+  referenceImage?: string
 ) {
   const sourceFiles = files.filter((file) => !file.is_folder);
   const active = sourceFiles.find((file) => file.path === activePath);
@@ -217,6 +722,7 @@ export function selectProjectContext(
     activePath,
     selectedCode: selectedCode?.slice(0, 12_000),
     previewError: previewError?.slice(0, 8_000),
+    referenceImage,
   };
 }
 
@@ -230,15 +736,16 @@ function relevance(path: string) {
 }
 
 
-export async function runGeminiAgent(
-  prompt: string,
-  context: ReturnType<typeof selectProjectContext>
-): Promise<unknown> {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.local.');
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+export interface CodingAgentOptions {
+  aiConfig?: { apiKey: string; model?: string; providerId?: string; keySource?: string };
+  onUsage?: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
+  onFallback?: (fallbackInfo: { providerId: string; model: string }) => void;
+}
 
-  const system = `You are the Coding Agent for Codatron.ai, a professional AI Product Development IDE.
+export type GeminiAgentOptions = CodingAgentOptions;
+
+export function buildFullCodingAgentSystemPrompt(context: ReturnType<typeof selectProjectContext>): string {
+  return `You are the Coding Agent for Codatron.ai, a professional AI Product Development IDE.
 
 You work INSIDE an existing software project.
 
@@ -266,9 +773,14 @@ CORE RULES
 - Inspect package.json and the provided project tree before generating architecture.
 - Identify the actual framework, language, package manager, routing structure, and existing conventions.
 - Respect the existing Next.js App Router structure when present.
+- Respect existing React/Vite, CRA, or other app conventions already in the project.
 - Respect existing TypeScript configuration.
 - Respect existing Tailwind/shadcn/component conventions.
 - Reuse existing dependencies when they already provide the required functionality.
+- Do not assume Next.js when the user asked for React or when the project already uses Vite/React.
+- For a React project, generate a valid React app structure using Vite conventions when appropriate: package.json, vite.config.*, index.html, src/main.jsx/tsx, src/App.jsx/tsx, src/index.css.
+- For a Next.js project, generate the proper Next.js file structure: package.json, app/layout.tsx, app/page.tsx, app/globals.css, next.config.* when needed.
+- For a static HTML/CSS page, generate only the required static files and not a framework app unless the user asked for one.
 
 3. SOURCE OF TRUTH
 - The project files supplied in the context represent the current project state.
@@ -307,7 +819,19 @@ For a new Next.js App Router application, when those files do not already exist,
 - required utilities/lib files
 - public assets when needed
 
-For Vite/React, use the existing Vite structure when present.
+For a React/Vite application, use the correct Vite structure when appropriate:
+
+- package.json
+- vite.config.*
+- index.html
+- src/main.jsx or src/main.tsx
+- src/App.jsx or src/App.tsx
+- src/index.css or src/styles.css
+- required components
+
+If the user explicitly asks for a React app, do not produce a Next.js-only structure unless the project is already Next.js.
+If the user explicitly asks for a Next.js app, do not produce a Vite-only structure unless the project is already Vite.
+Do not generate a partial file set like package.json + config alone without the actual app entry file.
 
 IMPORTANT:
 
@@ -339,6 +863,15 @@ Do NOT generate:
 - Hello World/demo pages unless explicitly requested.
 
 Build the actual requested product.
+
+CRITICAL: RESPONSE SIZE & TOKEN EFFICIENCY:
+- Prioritize creating the core, high-impact files first:
+  1. package.json and configuration
+  2. app/layout.tsx and app/page.tsx (or main entry point)
+  3. Essential interactive components and data files
+- Keep demo/mock data arrays concise (e.g. 6 to 8 realistic items, NOT dozens of items).
+- Avoid bloated inline SVGs or massive mock databases. Use Lucide icons and sleek CSS/Tailwind classes.
+- Ensure the total output stays cleanly within token limits so that every file is generated completely without truncation.
 
 ==================================================
 2. CODE MODE
@@ -421,31 +954,56 @@ Preview/dev-server error:
 Return targeted UPDATE/CREATE operations.
 
 ==================================================
-4. FILE OPERATIONS
+4. FILE OPERATIONS & 4-STEP DECISION PIPELINE
 ==================================================
 
-Allowed operations:
+Allowed operations: CREATE, UPDATE, DELETE, RENAME
 
-CREATE
-UPDATE
-DELETE
-RENAME
+CRITICAL 4-STEP DECISION WORKFLOW:
+Before generating any file operation:
 
-CREATE:
-Use only when the target file does not exist.
+STEP 1: INSPECT THE CURRENT PROJECT TREE
+Examine all existing paths in the provided project tree (e.g. app/, components/, lib/).
 
-UPDATE:
-Use when modifying an existing file.
+STEP 2: UNDERSTAND EXISTING ARCHITECTURE & CONVENTIONS
+- Framework & Router: Next.js App Router (app/ directory, page.tsx, layout.tsx) vs Pages Router vs Vite
+- Directory structure: components/, components/ui/, app/, lib/
+- Naming conventions: PascalCase for components (e.g. Pricing.tsx) or kebab-case (e.g. pricing-section.tsx), or route-based (e.g. app/pricing/page.tsx)
+- Existing relevant components: inspect what is already imported or rendered in app/page.tsx
 
-DELETE:
-Use sparingly and only when the file is genuinely unnecessary or explicitly requested.
+STEP 3: DETERMINE IF THE REQUESTED FUNCTIONALITY ALREADY EXISTS
+Check if a file in the project tree already represents the target feature or page:
+- E.g. if user asks "Build a pricing page", check if components/Pricing.tsx or app/pricing/page.tsx already exists!
+- E.g. if user asks "Make the pricing cards more premium", inspect the existing pricing file!
 
-RENAME:
-Use when a file must actually move or be renamed.
+STEP 4: CHOOSE OPERATION & PATH
+- If a relevant file EXISTS:
+  You MUST choose UPDATE on that existing file.
+  NEVER create duplicate files such as Pricing2.tsx, PricingNew.tsx, PricingUpdated.tsx, or Navbar2.tsx.
+- If a relevant file DOES NOT EXIST:
+  Choose CREATE with a meaningful, appropriate path based on the project's existing structure and conventions.
+  Examples:
+    - components/Pricing.tsx or components/pricing/pricing-section.tsx or app/pricing/page.tsx
+    - components/resume/resume-form.tsx or components/resume/resume-preview.tsx
+  Do NOT hardcode the same filename for every project. Decide dynamically based on the project structure.
+  STRICTLY FORBIDDEN:
+  - Never name files generic placeholders like components/new-file.tsx, component1.tsx, or temp.tsx.
 
-Never delete a working file merely because you prefer another architecture.
+1. AUTOMATIC MEANINGFUL FILE NAMING:
+   When creating new files, always choose appropriate, clean, conventional, and meaningful names based on:
+   - feature / component responsibility
+   - folder structure conventions (e.g., components/, app/, lib/)
+   - framework conventions (e.g., PascalCase for React components like Pricing.tsx or kebab-case)
 
-Never create duplicate files with slightly different names.
+2. PREFER UPDATE OVER CREATE (NO DUPLICATES):
+   Before creating a file, inspect the existing project tree.
+   If a file representing that feature already exists, UPDATE it! Do NOT duplicate it!
+
+3. DELETE:
+   Use sparingly and only when a file is genuinely obsolete or explicitly requested.
+
+4. RENAME:
+   Use only when a file must legitimately change location or naming.
 
 ==================================================
 5. DEPENDENCY RULES
@@ -483,15 +1041,16 @@ When working with Next.js:
 - Preserve existing authentication and database architecture.
 - Do not replace Next.js with Vite/CRA.
 - Do not create Create React App files in a Next.js project.
+- In package.json for Next.js, use Next.js 14.2.24 and React 18, and include "@next/swc-wasm-nodejs": "14.2.24" in dependencies for WebContainer WebAssembly runtime compatibility.
 
 ==================================================
-7. UI GENERATION RULES
+7. UI & REAL VISUAL ASSET RULES
 ==================================================
 
 When generating UI:
 
 - Build the requested product, not a generic dashboard template.
-- Make the UI responsive.
+- Make the UI responsive with clean mobile navigation and flexible layouts.
 - Reuse existing design tokens/components.
 - Respect existing shadcn/Tailwind conventions.
 - Use semantic HTML.
@@ -500,6 +1059,45 @@ When generating UI:
 - Avoid excessive monolithic files.
 - Do not generate fake interactions that appear functional but do nothing.
 
+CRITICAL: REAL VISUAL ASSETS & IMAGERY STRATEGY:
+Generated UI should NEVER automatically rely on:
+- empty gradient backgrounds where visual imagery is expected
+- plain color blocks or gray rectangles
+- generic placeholder boxes like "Image goes here" or "[Poster Placeholder]"
+- broken image URLs or missing assets
+
+When the requested interface requires visual assets (streaming/Netflix, travel, e-commerce, portfolio, landing pages, galleries):
+1. USE REAL, THEMATIC UNSPLASH IMAGES:
+   Provide high-resolution, thematic, curated stock photography from Unsplash.
+   Examples:
+   - Streaming/Cinema:
+     * Sci-Fi: https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80
+     * Space: https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80
+     * Thriller: https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=80
+     * Drama: https://images.unsplash.com/photo-1485846234645-a62644f84728?w=800&auto=format&fit=crop&q=80
+     * Nature/Doc: https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=800&auto=format&fit=crop&q=80
+     * Animation: https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80
+   - E-Commerce / Products:
+     * Tech / Audio: https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&auto=format&fit=crop&q=80
+     * Watches: https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80
+     * Shoes / Apparel: https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&auto=format&fit=crop&q=80
+   - Travel / Hospitality:
+     * Tropical: https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80
+     * Architecture: https://images.unsplash.com/photo-1580587771525-78b9dba3b914?w=800&auto=format&fit=crop&q=80
+2. ASSET ROBUSTNESS & RESPONSIVENESS:
+   - Always use proper aspect ratio classes (e.g. aspect-[2/3] for movie posters, aspect-video for hero banners, aspect-square for products).
+   - Use w-full h-full object-cover to prevent layout overflow.
+   - For demo applications, use original cinematic titles with compelling descriptions (e.g. "Chronicles of Nebula", "Midnight Echoes", "The Quantum Horizon").
+   - Include graceful fallback handling in img elements (e.g. onError={(e) => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=800&auto=format&fit=crop&q=80'; }}).
+${context.referenceImage ? `
+==================================================
+REFERENCE IMAGE CONTEXT
+==================================================
+The user has attached a visual reference image / screenshot to their prompt.
+Visually align the generated application with this reference:
+- Mirror the visual hierarchy, header/navigation design, card grid arrangements, color palette, and spacing.
+- Maintain the visual tone and layout structure presented in the reference.
+` : ''}
 If the project already has an established visual system:
 
 PRESERVE IT.
@@ -635,6 +1233,12 @@ No code fences.
 Schema:
 
 {
+  "plan": [
+    "Analyze project architecture and requirements",
+    "Create or update target component files",
+    "Configure styling and interactive features",
+    "Verify application preview"
+  ],
   "summary": "Concise description of the implementation",
   "operations": [
     {
@@ -650,8 +1254,25 @@ Schema:
       "name": "package-name",
       "version": "version-specifier"
     }
+  ],
+  "assets": [
+    {
+      "id": "asset-id",
+      "type": "image",
+      "description": "visual asset description"
+    }
   ]
 }
+
+==================================================
+14. VISUAL AESTHETICS & ASSETS
+==================================================
+- When generating visual web applications (e.g. Netflix clone, streaming service, SaaS dashboard):
+  * Use sleek dark themes, high-contrast typography, and smooth CSS gradients.
+  * Use Lucide React icons for controls, playback, search, and badges.
+  * For streaming/poster cards, design elegant CSS poster cards with gradient backdrops and category badges.
+  * Do NOT use broken or random external image URLs (e.g. https://random-site/image.jpg).
+  * If assets are needed, declare them in the optional "assets" manifest array in your response.
 
 For create/update:
 
@@ -679,9 +1300,267 @@ Before returning the JSON:
 10. Confirm no secrets were generated.
 
 Return the final structured file operations only.`;
+}
 
-  const maxAttempts = MAX_GEMINI_RETRIES + 1;
+export async function runHuggingFaceAgent(
+  prompt: string,
+  context: ReturnType<typeof selectProjectContext>,
+  options?: CodingAgentOptions
+): Promise<unknown> {
+  const token = options?.aiConfig?.apiKey?.trim() || process.env.HF_TOKEN?.trim();
+  if (!token) {
+    throw new HuggingFaceAuthError(
+      'Hugging Face is not configured. Add HF_TOKEN to .env or add your personal API key in Profile.'
+    );
+  }
+
+  const model = options?.aiConfig?.model?.trim() || process.env.HF_MODEL?.trim() || DEFAULT_HF_MODEL;
+  const system = buildFullCodingAgentSystemPrompt(context);
+
+  const messages = [
+    { role: 'system', content: system },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        instruction: prompt,
+        project: context,
+      }),
+    },
+  ];
+
+  const hf = new HfInference(token);
+  const maxAttempts = MAX_HF_RETRIES + 1;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    console.log(`[Hugging Face API] Model: ${model}, Attempt: ${attempt + 1}/${maxAttempts}`);
+    try {
+      const response = await hf.chatCompletion({
+        model,
+        messages,
+        temperature: 0.2,
+        max_tokens: 4096,
+      });
+
+      const choice = response.choices?.[0];
+      if (!choice || !choice.message?.content) {
+        throw new Error('Hugging Face returned an empty response.');
+      }
+
+      if (options?.onUsage && response.usage) {
+        options.onUsage({
+          inputTokens: response.usage.prompt_tokens ?? 0,
+          outputTokens: response.usage.completion_tokens ?? 0,
+          totalTokens:
+            response.usage.total_tokens ??
+            ((response.usage.prompt_tokens ?? 0) + (response.usage.completion_tokens ?? 0)),
+        });
+      }
+
+      const rawText = choice.message.content.trim();
+      let cleanedJson = rawText;
+      if (cleanedJson.startsWith('```')) {
+        const fenceMatch = cleanedJson.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+        cleanedJson = fenceMatch
+          ? fenceMatch[1].trim()
+          : cleanedJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleanedJson);
+      } catch (parseErr) {
+        console.warn(`[Hugging Face JSON Parse Error] Failed to parse response from ${model}:`, parseErr);
+        const salvaged = salvageTruncatedOperations(rawText);
+        if (salvaged && salvaged.operations && salvaged.operations.length > 0) {
+          console.log(`[Hugging Face JSON Salvaged] Successfully salvaged ${salvaged.operations.length} completed files!`);
+          return salvaged;
+        }
+        throw new MalformedAIResponseError(
+          'AI returned an invalid project response. Retrying with a safer generation format.'
+        );
+      }
+
+      return parsed;
+    } catch (err: unknown) {
+      if (err instanceof MalformedAIResponseError) {
+        throw err;
+      }
+      lastError = err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const status = (err as { httpResponse?: { status?: number } })?.httpResponse?.status;
+
+      if (
+        status === 401 ||
+        errMsg.toLowerCase().includes('invalid username or password') ||
+        errMsg.toLowerCase().includes('unauthorized')
+      ) {
+        throw new HuggingFaceAuthError(
+          'Hugging Face API authentication failed. Check the server-side HF_TOKEN configuration.'
+        );
+      }
+
+      if (
+        status === 402 ||
+        errMsg.toLowerCase().includes('quota') ||
+        errMsg.toLowerCase().includes('balance') ||
+        errMsg.toLowerCase().includes('insufficient')
+      ) {
+        throw new HuggingFaceQuotaError(
+          'Hugging Face API credits or balance is insufficient. Please check billing or token settings.'
+        );
+      }
+
+      if (status === 429) {
+        if (attempt < maxAttempts - 1) {
+          const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+          console.log(`[Hugging Face API] Rate limit reached. Retrying in ${delay}ms`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        throw new HuggingFaceRateLimitError(
+          'Hugging Face API rate limit reached. Please retry shortly.'
+        );
+      }
+
+      const isServerError =
+        [500, 502, 503, 504].includes(status ?? 0) ||
+        errMsg.toLowerCase().includes('unavailable') ||
+        errMsg.toLowerCase().includes('fetch failed') ||
+        errMsg.toLowerCase().includes('network') ||
+        errMsg.toLowerCase().includes('requesting the provider') ||
+        errMsg.toLowerCase().includes('providerapi');
+
+      if (isServerError) {
+        if (attempt < maxAttempts - 1) {
+          const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+          console.log(`[Hugging Face API] Server/Provider error (${status || 'network'}). Retrying in ${delay}ms`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        throw new HuggingFaceUnavailableError(
+          'Hugging Face Inference Provider is temporarily unavailable. Please retry.'
+        );
+      }
+
+      if (attempt === maxAttempts - 1) break;
+      const delay = 1000 * Math.pow(2, attempt) + Math.floor(Math.random() * 300);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new HuggingFaceUnavailableError(
+    'Hugging Face Inference Provider is temporarily unavailable. Please retry.'
+  );
+}
+
+export function salvageTruncatedOperations(rawText: string): AgentResult | null {
+  try {
+    let summary = 'Project files generated successfully.';
+    const summaryMatch = rawText.match(/"summary"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (summaryMatch) {
+      summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    }
+
+    const opsIndex = rawText.indexOf('"operations"');
+    if (opsIndex === -1) return null;
+    const arrayStart = rawText.indexOf('[', opsIndex);
+    if (arrayStart === -1) return null;
+
+    const operations: Array<Record<string, unknown>> = [];
+    let i = arrayStart + 1;
+    const len = rawText.length;
+
+    while (i < len) {
+      while (i < len && rawText[i] !== '{' && rawText[i] !== ']') {
+        i++;
+      }
+      if (i >= len || rawText[i] === ']') break;
+
+      const objStart = i;
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let foundEnd = false;
+
+      while (i < len) {
+        const char = rawText[i];
+        if (escape) {
+          escape = false;
+        } else if (char === '\\') {
+          escape = true;
+        } else if (char === '"') {
+          inString = !inString;
+        } else if (!inString) {
+          if (char === '{') {
+            depth++;
+          } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+              foundEnd = true;
+              i++;
+              break;
+            }
+          }
+        }
+        i++;
+      }
+
+      if (foundEnd) {
+        const objStr = rawText.slice(objStart, i);
+        try {
+          const parsedObj = JSON.parse(objStr) as Record<string, unknown>;
+          if (
+            parsedObj &&
+            typeof parsedObj.type === 'string' &&
+            typeof parsedObj.path === 'string' &&
+            typeof parsedObj.content === 'string'
+          ) {
+            operations.push(parsedObj);
+          }
+        } catch {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    if (operations.length === 0) return null;
+
+    const depsMatch = rawText.match(/"dependencies"\s*:\s*\[([\s\S]*?)\]/);
+    let dependencies: Array<{ name: string; version: string }> = [];
+    if (depsMatch) {
+      try {
+        dependencies = JSON.parse(`[${depsMatch[1]}]`) as Array<{ name: string; version: string }>;
+      } catch { }
+    }
+
+    return {
+      summary: `${summary} (Salvaged complete files from generation)`,
+      operations: operations as unknown as AgentResult['operations'],
+      dependencies,
+    };
+  } catch (err) {
+    console.error('Failed to salvage truncated operations:', err);
+    return null;
+  }
+}
+
+export async function runGeminiAgent(
+  prompt: string,
+  context: ReturnType<typeof selectProjectContext>,
+  options?: GeminiAgentOptions
+): Promise<unknown> {
+  const key = options?.aiConfig?.apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
+  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.local or add your personal API key in Profile.');
+  const model = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const maxAttempts = 4;
+  const system = buildFullCodingAgentSystemPrompt(context);
 
   const generationConfig: Record<string, unknown> = {
     responseMimeType: 'application/json',
@@ -853,6 +1732,14 @@ Return the final structured file operations only.`;
     throw new Error('Gemini returned no candidates in response.');
   }
 
+  // Extract usage metadata if returned by Gemini
+  if (options?.onUsage && payload.usageMetadata) {
+    const inputTokens = payload.usageMetadata.promptTokenCount ?? 0;
+    const outputTokens = payload.usageMetadata.candidatesTokenCount ?? 0;
+    const totalTokens = payload.usageMetadata.totalTokenCount ?? (inputTokens + outputTokens);
+    options.onUsage({ inputTokens, outputTokens, totalTokens });
+  }
+
   const finishReason = candidate.finishReason;
   const parts = candidate.content?.parts ?? [];
   const rawText = parts.map((part) => part.text ?? '').join('').trim();
@@ -866,7 +1753,12 @@ Return the final structured file operations only.`;
 
   // Detect truncated JSON
   if (finishReason === 'MAX_TOKENS') {
-    console.error(`[Gemini JSON Error] Truncated output detected (finishReason: MAX_TOKENS). Length: ${rawText.length}`);
+    console.warn(`[Gemini JSON Warning] Truncated output detected (finishReason: MAX_TOKENS). Length: ${rawText.length}. Attempting to salvage completed file operations...`);
+    const salvaged = salvageTruncatedOperations(rawText);
+    if (salvaged && salvaged.operations && salvaged.operations.length > 0) {
+      console.log(`[Gemini JSON Salvaged] Successfully salvaged ${salvaged.operations.length} completed files!`);
+      return salvaged;
+    }
     throw new Error(
       'Gemini returned an incomplete structured response (token limit reached). No files were saved. Please retry the generation or split the build into smaller batches.'
     );
@@ -896,4 +1788,63 @@ Return the final structured file operations only.`;
   }
 
   return parsed;
+}
+
+export async function runCodingAgent(
+  prompt: string,
+  context: ReturnType<typeof selectProjectContext>,
+  options?: CodingAgentOptions
+): Promise<unknown> {
+  const providerId = options?.aiConfig?.providerId;
+  const isDirectGemini = providerId === 'google-gemini' && options?.aiConfig?.keySource === 'byok';
+
+  if (isDirectGemini) {
+    return runGeminiAgent(prompt, context, options);
+  }
+
+  // Developer IDE Primary: Hugging Face Qwen3-Coder
+  try {
+    return await runHuggingFaceAgent(prompt, context, options);
+  } catch (hfErr) {
+    // Only fall back to Gemini if Hugging Face is genuinely unavailable (provider outage, 5xx, network failure)
+    const isUnavailable =
+      hfErr instanceof HuggingFaceUnavailableError ||
+      (hfErr as { name?: string })?.name === 'HuggingFaceUnavailableError' ||
+      (hfErr as { status?: number })?.status === 503 ||
+      (hfErr instanceof Error && (
+        hfErr.message.toLowerCase().includes('unavailable') ||
+        hfErr.message.toLowerCase().includes('requesting the provider') ||
+        hfErr.message.includes('502') ||
+        hfErr.message.includes('503') ||
+        hfErr.message.includes('504') ||
+        hfErr.message.toLowerCase().includes('fetch failed') ||
+        hfErr.message.toLowerCase().includes('network')
+      ));
+
+    // Do NOT fall back for authentication failure, quota/credit errors, malformed responses, or prompt validation
+    if (isUnavailable) {
+      const geminiKey = process.env.GEMINI_API_KEY?.trim();
+      if (!geminiKey) {
+        console.warn('[Coding Agent Fallback] Hugging Face unavailable but GEMINI_API_KEY is not configured in environment.');
+      } else {
+        console.warn('[Coding Agent] Hugging Face unavailable. Gracefully falling back to Gemini:', hfErr instanceof Error ? hfErr.message : hfErr);
+        const fallbackModel = DEVELOPER_IDE_CONFIG.fallbackModel;
+        options?.onFallback?.({
+          providerId: DEVELOPER_IDE_CONFIG.fallbackProvider,
+          model: fallbackModel,
+        });
+        return await runGeminiAgent(prompt, context, {
+          ...options,
+          aiConfig: {
+            apiKey: geminiKey,
+            model: fallbackModel,
+            providerId: DEVELOPER_IDE_CONFIG.fallbackProvider,
+            keySource: 'platform',
+          },
+        });
+      }
+    }
+
+    throw hfErr;
+  }
 }

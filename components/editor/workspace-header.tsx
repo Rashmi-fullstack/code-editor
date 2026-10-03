@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   FolderTree,
@@ -12,11 +12,13 @@ import {
   Loader2,
   Download,
   Command,
-  Code2,
-  Compass,
   Play,
   Edit2,
   X,
+  ArrowLeft,
+  Plus,
+  ChevronDown,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,16 +27,39 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher';
+import { GlobalUserMenu } from '@/components/layout/global-user-menu';
+import { useCredits } from '@/components/credit-provider';
 import type { Project } from '@/lib/types/database';
+
+export type SaveContextInfo =
+  | { type: 'product'; status: 'saved' | 'saving' | 'unsaved' }
+  | { type: 'file'; status: 'saved' | 'saving' | 'unsaved'; path: string }
+  | { type: 'project'; status: 'saved' | 'saving' | 'unsaved' };
 
 export interface WorkspaceHeaderProps {
   project: Project | null;
   activePath: string;
   dirty: boolean;
   isWorking: boolean;
+  saveState?: 'saved' | 'saving' | 'unsaved';
+  saveContext?: SaveContextInfo;
+  hasFiles?: boolean;
+  hasActiveFile?: boolean;
+  lastSavedAt?: Date | null;
   workspace?: 'developer' | 'product';
+  workspaceName?: string;
   onWorkspaceChange?: (ws: 'developer' | 'product') => void;
   onSave: () => void | Promise<unknown>;
+  onSaveProject?: () => void | Promise<unknown>;
+  onNewProject?: () => void;
   onExportZip: () => void | Promise<unknown>;
   onOpenCommandPalette: () => void;
   showFiles: boolean;
@@ -42,17 +67,34 @@ export interface WorkspaceHeaderProps {
   showAiPanel: boolean;
   onToggleAiPanel: () => void;
   onRenameProject?: (newName: string) => Promise<void> | void;
+  onRenameWorkspace?: (newName: string) => Promise<void> | void;
   onRunPreview?: () => void;
+}
+
+function getRelativeText(date?: Date | null): string {
+  if (!date) return 'Saved';
+  const diffSecs = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (diffSecs < 10) return 'Saved just now';
+  if (diffSecs < 60) return `Saved ${diffSecs}s ago`;
+  const diffMins = Math.floor(diffSecs / 60);
+  return `Saved ${diffMins}m ago`;
 }
 
 export function WorkspaceHeader({
   project,
-  activePath,
   dirty,
   isWorking,
+  saveState = dirty ? 'unsaved' : 'saved',
+  saveContext,
+  hasFiles = true,
+  hasActiveFile = true,
+  lastSavedAt,
   workspace = 'developer',
+  workspaceName,
   onWorkspaceChange,
   onSave,
+  onSaveProject,
+  onNewProject,
   onExportZip,
   onOpenCommandPalette,
   showFiles,
@@ -60,29 +102,73 @@ export function WorkspaceHeader({
   showAiPanel,
   onToggleAiPanel,
   onRenameProject,
+  onRenameWorkspace,
   onRunPreview,
 }: WorkspaceHeaderProps) {
+  const { creditsRemaining, creditLimit } = useCredits();
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
+  const [relativeSavedText, setRelativeSavedText] = useState<string>(() => getRelativeText(lastSavedAt));
+
+  const displayName = workspaceName ?? project?.name ?? 'Untitled Project';
 
   const handleStartRename = () => {
-    setNameInput(project?.name ?? 'Untitled Project');
+    setNameInput(displayName);
     setIsEditingName(true);
   };
 
   const handleConfirmRename = async () => {
-    if (!nameInput.trim()) {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
       setIsEditingName(false);
       return;
     }
-    if (onRenameProject && nameInput.trim() !== project?.name) {
-      await onRenameProject(nameInput.trim());
+    if (trimmed !== displayName) {
+      if (onRenameWorkspace) {
+        await onRenameWorkspace(trimmed);
+      } else if (onRenameProject) {
+        await onRenameProject(trimmed);
+      }
     }
     setIsEditingName(false);
   };
 
+  // Update relative "Saved X ago" ticker at interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRelativeSavedText(getRelativeText(lastSavedAt));
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [lastSavedAt]);
+
+  let indicatorText = 'Saved';
+  let indicatorStatus: 'saving' | 'unsaved' | 'saved' = 'saved';
+
+  if (saveContext) {
+    indicatorStatus = saveContext.status;
+    if (saveContext.type === 'product') {
+      if (saveContext.status === 'saving') indicatorText = 'Saving product…';
+      else if (saveContext.status === 'unsaved') indicatorText = 'Product changes unsaved';
+      else indicatorText = 'Product saved';
+    } else if (saveContext.type === 'file') {
+      const fileName = saveContext.path ? (saveContext.path.split('/').pop() || saveContext.path) : '';
+      if (saveContext.status === 'saving') indicatorText = `Saving ${fileName || 'file'}…`;
+      else if (saveContext.status === 'unsaved') indicatorText = 'File unsaved';
+      else indicatorText = `Saved ${fileName || ''}`.trim() || 'Saved';
+    } else {
+      if (saveContext.status === 'saving') indicatorText = 'Saving project…';
+      else if (saveContext.status === 'unsaved') indicatorText = 'Project unsaved';
+      else indicatorText = 'Project saved';
+    }
+  } else {
+    indicatorStatus = isWorking ? 'saving' : dirty ? 'unsaved' : saveState || 'saved';
+    if (indicatorStatus === 'saving') indicatorText = 'Saving…';
+    else if (indicatorStatus === 'unsaved') indicatorText = workspace === 'product' ? 'Product changes unsaved' : 'File unsaved';
+    else indicatorText = relativeSavedText || 'Saved';
+  }
+
   return (
-    <header className="relative flex h-12 shrink-0 items-center justify-between bg-[#0b0c18] border-b border-white/10 px-4 select-none z-10">
+    <header className="relative flex h-12 shrink-0 items-center justify-between bg-[#060a12]/95 backdrop-blur-xl border-b border-white/10 px-3 sm:px-4 select-none z-10">
       {/* Bottom glowing line during active AI synthesis */}
       <div
         className={`absolute inset-x-0 bottom-0 h-[2px] transition-all duration-500 ${
@@ -92,27 +178,46 @@ export function WorkspaceHeader({
         }`}
       />
 
-      {/* Left: Brand + Project + Breadcrumb */}
-      <div className="flex items-center gap-3 min-w-0">
+      {/* Left: [← Projects] + Brand + Breadcrumbs */}
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* Back to Projects Button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/projects"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-white/10 transition border border-white/5"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Projects</span>
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            Back to My Projects Hub
+          </TooltipContent>
+        </Tooltip>
+
+        <ChevronRight className="h-3 w-3 text-slate-600 hidden sm:block" />
+
+        {/* Brand */}
         <Link
           href="/"
-          className="group flex items-center gap-2 rounded-lg py-1 text-sm font-semibold text-white transition hover:opacity-90"
+          className="group flex items-center gap-1.5 rounded-lg py-1 text-xs font-semibold text-white transition hover:opacity-90"
         >
           <span
-            className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md transition-all duration-500 ${
+            className={`flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md transition-all duration-500 ${
               isWorking
                 ? 'shadow-indigo-500/50 scale-105 ring-2 ring-indigo-400/50'
                 : 'shadow-indigo-500/20'
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5 text-white" />
+            <Sparkles className="h-3 w-3 text-white" />
           </span>
-          <span className="font-bold tracking-tight text-white hidden sm:inline">
-            Codatron.ai
+          <span className="font-bold tracking-tight text-white hidden lg:inline">
+            Codatron
           </span>
         </Link>
 
-        <ChevronRight className="h-3.5 w-3.5 text-slate-600 hidden sm:block" />
+        <ChevronRight className="h-3 w-3 text-slate-600 hidden sm:block" />
 
         {/* Project Name (Editable) */}
         <div className="flex items-center gap-1.5 min-w-0">
@@ -127,7 +232,7 @@ export function WorkspaceHeader({
                   if (e.key === 'Escape') setIsEditingName(false);
                 }}
                 autoFocus
-                className="rounded border border-indigo-500/50 bg-black/60 px-2 py-0.5 text-xs text-white outline-none w-36 sm:w-48"
+                className="rounded border border-indigo-500/50 bg-black/60 px-2 py-0.5 text-xs text-white outline-none w-32 sm:w-44"
               />
               <button
                 type="button"
@@ -150,79 +255,89 @@ export function WorkspaceHeader({
             <div className="group flex items-center gap-1.5">
               <h1
                 onClick={handleStartRename}
-                className="truncate text-xs sm:text-[13px] font-semibold text-slate-100 max-w-[150px] sm:max-w-[220px] cursor-pointer hover:text-indigo-300 transition"
-                title="Click to rename project"
+                className="truncate text-xs sm:text-[13px] font-semibold text-slate-100 max-w-[120px] sm:max-w-[180px] cursor-pointer hover:text-indigo-300 transition"
+                title={workspace === 'product' ? 'Click to rename Product Manager workspace' : 'Click to rename Developer workspace'}
               >
-                {project?.name ?? 'Loading…'}
+                {displayName}
               </h1>
               <button
                 type="button"
                 onClick={handleStartRename}
                 className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-400 hover:text-white transition"
-                title="Rename Project"
+                title={workspace === 'product' ? 'Rename Product Manager Workspace' : 'Rename Developer Workspace'}
               >
                 <Edit2 className="h-2.5 w-2.5" />
               </button>
             </div>
           )}
 
-          <Badge
-            variant="outline"
-            className="hidden md:inline-flex border-indigo-500/30 bg-indigo-500/10 text-[10px] font-medium text-indigo-300 py-0 px-1.5"
-          >
-            Gemini
-          </Badge>
+          {/* New Project Quick Button */}
+          {onNewProject && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onNewProject}
+                  className="hidden sm:flex items-center justify-center h-6 w-6 rounded-md border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 transition"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                Create New Project
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* Persistent Save Status Indicator */}
+          <div className="hidden xl:flex items-center pl-2">
+            {indicatorStatus === 'saving' ? (
+              <span className="flex items-center gap-1.5 text-[11px] text-amber-300 font-medium">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>{indicatorText}</span>
+              </span>
+            ) : indicatorStatus === 'unsaved' ? (
+              <span className="flex items-center gap-1.5 text-[11px] text-amber-400 font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>{indicatorText}</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                <span>{indicatorText}</span>
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Center: Workspace Switcher & Command Palette */}
       <div className="flex items-center gap-2">
-        {onWorkspaceChange && (
-          <div className="flex items-center rounded-lg bg-black/40 border border-white/10 p-0.5 shadow-inner">
-            <button
-              type="button"
-              onClick={() => onWorkspaceChange('developer')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
-                workspace === 'developer'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              <Code2 className="h-3.5 w-3.5" />
-              <span>Developer IDE</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onWorkspaceChange('product')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
-                workspace === 'product'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              <Compass className="h-3.5 w-3.5" />
-              <span>Product Manager</span>
-            </button>
-          </div>
+        {workspace === 'developer' && (
+          <WorkspaceSwitcher
+            currentWorkspace={workspace}
+            onWorkspaceChange={onWorkspaceChange}
+            projectId={project?.id}
+          />
         )}
 
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="hidden lg:flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/5 transition"
+          className="hidden 2xl:flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/5 transition"
         >
           <Command className="h-3.5 w-3.5 text-slate-400" />
-          <span>Command Palette…</span>
+          <span>Commands</span>
           <kbd className="rounded border border-white/10 bg-white/5 px-1 text-[10px] font-mono text-slate-400">
             Ctrl+K
           </kbd>
         </button>
       </div>
 
-      {/* Right: Actions, Run/Preview, Save, Export, Panel Toggles */}
-      <div className="flex items-center gap-2">
-        {/* Run / Preview button */}
-        {onRunPreview && (
+      {/* Right: Preview, Save Actions, File Explorer Toggle, AI Panel Toggle, Export */}
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* Run / Preview button (Developer IDE only) */}
+        {workspace === 'developer' && onRunPreview && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -241,51 +356,57 @@ export function WorkspaceHeader({
           </Tooltip>
         )}
 
-        {/* Toggle File Explorer */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onToggleFiles}
-              className={`h-8 w-8 p-0 transition ${
-                showFiles
-                  ? 'bg-white/10 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <FolderTree className="h-4 w-4" />
-              <span className="sr-only">Toggle Files</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {showFiles ? 'Hide Files' : 'Show Files'}
-          </TooltipContent>
-        </Tooltip>
+        {/* Toggle File Explorer (Developer IDE only) */}
+        {workspace === 'developer' && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleFiles}
+                className={`h-8 w-8 p-0 transition ${
+                  showFiles
+                    ? 'bg-white/10 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <FolderTree className="h-4 w-4" />
+                <span className="sr-only">Toggle Files</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              {showFiles ? 'Hide Files' : 'Show Files'}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
-        {/* Toggle AI Panel */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onToggleAiPanel}
-              className={`h-8 w-8 p-0 transition ${
-                showAiPanel
-                  ? 'bg-white/10 text-white'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <MessageSquareCode className="h-4 w-4" />
-              <span className="sr-only">Toggle AI Assistant</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            {showAiPanel ? 'Hide AI Assistant' : 'Show AI Assistant'}
-          </TooltipContent>
-        </Tooltip>
+        {/* Toggle AI Panel (Developer IDE only) */}
+        {workspace === 'developer' && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleAiPanel}
+                className={`h-8 w-8 p-0 transition ${
+                  showAiPanel
+                    ? 'bg-white/10 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <MessageSquareCode className="h-4 w-4" />
+                <span className="sr-only">Toggle AI Assistant</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              {showAiPanel ? 'Hide AI Assistant' : 'Show AI Assistant'}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
-        <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
+        {workspace === 'developer' && (
+          <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
+        )}
 
         {/* Export ZIP */}
         <Tooltip>
@@ -293,44 +414,166 @@ export function WorkspaceHeader({
             <Button
               variant="ghost"
               size="sm"
+              disabled={!hasFiles}
               onClick={() => void onExportZip()}
-              className="h-8 px-2.5 text-xs text-slate-300 hover:text-white hover:bg-white/5 gap-1.5"
+              className="h-8 px-2 text-xs text-slate-300 hover:text-white hover:bg-white/5 gap-1.5 hidden md:flex disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Export ZIP</span>
+              <span className="hidden lg:inline">Export</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
-            Download full project as ZIP
+            {hasFiles ? 'Download full project as ZIP' : 'No files to export'}
           </TooltipContent>
         </Tooltip>
 
-        {/* Save Button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
+        {/* Save Group: File Save & Project Save */}
+        <div className="flex items-center">
+          {workspace === 'product' ? (
             <Button
               size="sm"
-              onClick={() => void onSave()}
-              disabled={!dirty || isWorking}
-              className={`h-8 px-3 text-xs font-medium gap-1.5 transition shadow-sm ${
-                dirty
+              onClick={() => void onSaveProject?.()}
+              disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
+              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
+                dirty || saveState === 'unsaved'
                   ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
-                  : 'bg-white/5 text-slate-500 hover:bg-white/5'
+                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
               }`}
             >
-              {isWorking ? (
+              {isWorking || saveState === 'saving' ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Save className="h-3.5 w-3.5" />
               )}
-              <span>Save</span>
+              <span className="hidden sm:inline">Save Product</span>
               <kbd className="hidden lg:inline text-[9px] font-mono opacity-60">⌘S</kbd>
             </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">
-            Save changes (Ctrl+S)
-          </TooltipContent>
-        </Tooltip>
+          ) : !hasActiveFile ? (
+            <Button
+              size="sm"
+              onClick={() => void onSaveProject?.()}
+              disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
+              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
+                dirty || saveState === 'unsaved'
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
+              }`}
+            >
+              {isWorking || saveState === 'saving' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">Save Project</span>
+              <kbd className="hidden lg:inline text-[9px] font-mono opacity-60">⌘⇧S</kbd>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => void onSave()}
+              disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
+              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
+                dirty || saveState === 'unsaved'
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
+              }`}
+            >
+              {isWorking || saveState === 'saving' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">Save</span>
+              <kbd className="hidden lg:inline text-[9px] font-mono opacity-60">⌘S</kbd>
+            </Button>
+          )}
+
+          {/* Dropdown for Save Project / Save Options */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                className={`h-8 w-6 p-0 rounded-l-none border-l border-white/10 transition ${
+                  dirty || saveState === 'unsaved'
+                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                    : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                }`}
+              >
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-52 bg-[#0e1022] border-white/10 text-slate-200 text-xs shadow-2xl"
+            >
+              {workspace === 'product' ? (
+                <DropdownMenuItem
+                  onClick={() => void onSaveProject?.()}
+                  className="flex items-center justify-between cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Save Product</span>
+                  </div>
+                  <kbd className="text-[10px] text-slate-400 font-mono">⌘S</kbd>
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  onClick={() => void onSave()}
+                  disabled={!hasActiveFile}
+                  className="flex items-center justify-between cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <div className="flex items-center gap-2">
+                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>{hasActiveFile ? 'Save Active File' : 'Save Active File (No file open)'}</span>
+                  </div>
+                  <kbd className="text-[10px] text-slate-400 font-mono">⌘S</kbd>
+                </DropdownMenuItem>
+              )}
+
+              {onSaveProject && (
+                <DropdownMenuItem
+                  onClick={() => void onSaveProject()}
+                  className="flex items-center justify-between cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="border-indigo-500/40 text-[9px] px-1 py-0 text-indigo-300">
+                      All
+                    </Badge>
+                    <span>Save Project</span>
+                  </div>
+                  <kbd className="text-[10px] text-slate-400 font-mono">⌘⇧S</kbd>
+                </DropdownMenuItem>
+              )}
+
+              <DropdownMenuSeparator className="bg-white/10" />
+
+              <DropdownMenuItem
+                onClick={() => void onExportZip()}
+                disabled={!hasFiles}
+                className="flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download className="h-3.5 w-3.5 text-slate-400" />
+                <span>Export Project ZIP</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Credit Indicator */}
+        <Link
+          href="/profile#credits"
+          className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-[11px] font-medium text-indigo-300 hover:bg-indigo-500/20 transition cursor-pointer"
+          title="Remaining AI Credits"
+        >
+          <Zap className="h-3 w-3 text-amber-400" />
+          <span>{creditsRemaining}/{creditLimit}</span>
+        </Link>
+
+        <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
+
+        {/* Global User Menu */}
+        <GlobalUserMenu />
       </div>
     </header>
   );

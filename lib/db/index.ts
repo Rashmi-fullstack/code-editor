@@ -3,3 +3,4 @@ export * from './files';
 export * from './history';
 export * from './profiles';
 export * from './starter-template';
+export * from './workspaces';

@@ -17,19 +17,15 @@ import {
   Code2,
   Loader2,
   Check,
-  FileCode,
   AlertCircle,
   ExternalLink,
-  ChevronRight,
-  Plus,
-  Filter,
   CheckCircle,
-  Clock,
   Zap,
   Globe,
-  TrendingUp,
-  ShieldAlert,
   Wand2,
+  Save,
+  Edit2,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,6 +39,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { createClient } from '@/lib/client';
+import { saveProductPlanToDb } from '@/lib/db/product';
 import type { ProductPlan, DevelopmentTask } from '@/lib/ai/product-planner';
 import type { TechnicalImplementationPlan } from '@/lib/ai/task-planner';
 import type { Project, ProjectFile } from '@/lib/types/database';
@@ -64,9 +62,11 @@ export interface ProductWorkspaceProps {
   project: Project | null;
   files: ProjectFile[];
   productPlan: ProductPlan | null;
+  workspaceName?: string;
   onPlanGenerated: (plan: ProductPlan) => void;
   onFilesUpdated: (newFiles: ProjectFile[], dependencies?: Array<{ name: string; version: string }>) => void;
   onSwitchToDeveloper: (targetFilePath?: string) => void;
+  onRenameWorkspace?: (newName: string) => Promise<void> | void;
 }
 
 const SECTIONS: Array<{ id: PmSection; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -87,9 +87,11 @@ export function ProductWorkspace({
   project,
   files,
   productPlan,
+  workspaceName,
   onPlanGenerated,
   onFilesUpdated,
   onSwitchToDeveloper,
+  onRenameWorkspace,
 }: ProductWorkspaceProps) {
   const [activeSection, setActiveSection] = useState<PmSection>('overview');
   const [idea, setIdea] = useState('');
@@ -102,6 +104,77 @@ export function ProductWorkspace({
   const [selectedTaskForReqs, setSelectedTaskForReqs] = useState<DevelopmentTask | null>(null);
   const [taskFilterStatus, setTaskFilterStatus] = useState<string>('all');
   const [taskSearch, setTaskSearch] = useState('');
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
+
+  // Dedicated PM Artifact Rename States (strictly isolated from developer files)
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskRenameInput, setTaskRenameInput] = useState('');
+  const [editingFeatureId, setEditingFeatureId] = useState<string | null>(null);
+  const [featureRenameInput, setFeatureRenameInput] = useState('');
+
+  const handleStartRenameTask = (task: DevelopmentTask) => {
+    setEditingTaskId(task.id);
+    setTaskRenameInput(task.title);
+  };
+
+  const handleConfirmRenameTask = async (taskId: string) => {
+    const clean = taskRenameInput.trim();
+    if (!clean || !productPlan) {
+      setEditingTaskId(null);
+      return;
+    }
+    const updatedTasks = productPlan.developmentTasks.map((t) =>
+      t.id === taskId ? { ...t, title: clean } : t
+    );
+    const updatedPlan: ProductPlan = { ...productPlan, developmentTasks: updatedTasks };
+    onPlanGenerated(updatedPlan);
+    setEditingTaskId(null);
+    if (project) {
+      const supabase = createClient();
+      await saveProductPlanToDb(supabase, project.id, updatedPlan);
+    }
+    toast.success(`Renamed task to "${clean}"`);
+  };
+
+  const handleStartRenameFeature = (feat: ProductPlan['features'][0]) => {
+    setEditingFeatureId(feat.id);
+    setFeatureRenameInput(feat.title);
+  };
+
+  const handleConfirmRenameFeature = async (featureId: string) => {
+    const clean = featureRenameInput.trim();
+    if (!clean || !productPlan) {
+      setEditingFeatureId(null);
+      return;
+    }
+    const updatedFeatures = productPlan.features.map((f) =>
+      f.id === featureId ? { ...f, title: clean } : f
+    );
+    const updatedPlan: ProductPlan = { ...productPlan, features: updatedFeatures };
+    onPlanGenerated(updatedPlan);
+    setEditingFeatureId(null);
+    if (project) {
+      const supabase = createClient();
+      await saveProductPlanToDb(supabase, project.id, updatedPlan);
+    }
+    toast.success(`Renamed feature to "${clean}"`);
+  };
+
+  const handleManualSavePlan = async () => {
+    if (!project || !productPlan) return;
+    setIsSavingPlan(true);
+    try {
+      const supabase = createClient();
+      const res = await saveProductPlanToDb(supabase, project.id, productPlan);
+      if (!res.success) throw res.error || new Error('Could not save product plan');
+      toast.success('Product plan & requirements saved to project!');
+    } catch (err: unknown) {
+      console.error('Failed to save plan:', err);
+      toast.error(err instanceof Error ? err.message : 'Could not save product plan');
+    } finally {
+      setIsSavingPlan(false);
+    }
+  };
 
   // Generate complete product specification
   const handleGeneratePlan = async () => {
@@ -123,7 +196,7 @@ export function ProductWorkspace({
       if (!res.ok) throw new Error(data.message || 'Failed to generate product plan.');
       onPlanGenerated(data.plan);
       setShowIdeaModal(false);
-      toast.success('Complete product plan & roadmap generated!');
+      toast.success('Complete product plan & roadmap generated and saved!');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Product planning failed.');
     } finally {
@@ -137,6 +210,14 @@ export function ProductWorkspace({
     if (!project) return;
     setActiveTaskId(task.id);
     setTaskStage('architecting');
+
+    // Progress status: TODO -> IN PROGRESS
+    if (productPlan) {
+      const inProgressTasks = productPlan.developmentTasks.map((t) =>
+        t.id === task.id ? { ...t, status: 'in-progress' as const } : t
+      );
+      onPlanGenerated({ ...productPlan, developmentTasks: inProgressTasks });
+    }
 
     try {
       // 1. Software Architect Agent formulate technical plan
@@ -168,7 +249,7 @@ export function ProductWorkspace({
       const updatedFiles: ProjectFile[] = genData.files ?? [];
       onFilesUpdated(updatedFiles, genData.dependencies);
 
-      // Update task status in plan
+      // Progress status: IN PROGRESS -> COMPLETED
       if (productPlan) {
         const updatedTasks = productPlan.developmentTasks.map((t) =>
           t.id === task.id ? { ...t, status: 'completed' as const } : t
@@ -177,15 +258,11 @@ export function ProductWorkspace({
       }
 
       setTaskStage('done');
-      toast.success(`Feature "${task.title}" built & persisted!`, {
-        action: {
-          label: 'View in IDE',
-          onClick: () => {
-            const primaryFile = plan.filesToCreate[0] || plan.filesToUpdate[0];
-            onSwitchToDeveloper(primaryFile);
-          },
-        },
-      });
+      const primaryFile = plan.filesToCreate[0] || plan.filesToUpdate[0];
+      toast.success(`Feature "${task.title}" completed! Opening in Developer IDE…`);
+      setTimeout(() => {
+        onSwitchToDeveloper(primaryFile);
+      }, 400);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Build pipeline failed.');
       setTaskStage('idle');
@@ -248,11 +325,10 @@ export function ProductWorkspace({
                     key={sec.id}
                     type="button"
                     onClick={() => setActiveSection(sec.id)}
-                    className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                    }`}
+                    className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition ${isActive
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+                      }`}
                   >
                     <div className="flex items-center gap-2.5">
                       <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
@@ -261,11 +337,10 @@ export function ProductWorkspace({
                     {isTasks && totalTasks > 0 && (
                       <Badge
                         variant="secondary"
-                        className={`h-4 px-1 text-[10px] ${
-                          isActive
-                            ? 'bg-white/20 text-white'
-                            : 'bg-white/10 text-slate-300'
-                        }`}
+                        className={`h-4 px-1 text-[10px] ${isActive
+                          ? 'bg-white/20 text-white'
+                          : 'bg-white/10 text-slate-300'
+                          }`}
                       >
                         {completedCount}/{totalTasks}
                       </Badge>
@@ -311,15 +386,32 @@ export function ProductWorkspace({
               variant="outline"
               className="border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px]"
             >
-              {project?.name ?? 'AI Project'}
+              {workspaceName ?? project?.name ?? 'AI Project'}
             </Badge>
           </div>
 
           <div className="flex items-center gap-2">
+            {productPlan && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleManualSavePlan}
+                disabled={isSavingPlan}
+                className="border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs gap-1.5 font-medium cursor-pointer"
+              >
+                {isSavingPlan ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" />
+                )}
+                <span>Save Product Plan</span>
+              </Button>
+            )}
+
             <Button
               size="sm"
               onClick={() => setShowIdeaModal(true)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs gap-1.5 font-medium shadow-sm shadow-indigo-600/30"
+              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs gap-1.5 font-medium shadow-sm shadow-indigo-600/30 cursor-pointer"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>{productPlan ? 'Evolve / Update Plan' : 'Define Product Idea'}</span>
@@ -553,17 +645,64 @@ export function ProductWorkspace({
                         key={feat.id}
                         className="rounded-xl border border-white/10 bg-[#0f1128] p-5 space-y-2"
                       >
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-semibold text-white">{feat.title}</h4>
+                        <div className="flex items-center justify-between gap-2">
+                          {editingFeatureId === feat.id ? (
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={featureRenameInput}
+                                onChange={(e) => setFeatureRenameInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') void handleConfirmRenameFeature(feat.id);
+                                  if (e.key === 'Escape') setEditingFeatureId(null);
+                                }}
+                                autoFocus
+                                className="rounded border border-indigo-500/50 bg-black/60 px-2 py-0.5 text-xs text-white outline-none w-full"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleConfirmRenameFeature(feat.id)}
+                                className="rounded p-1 text-emerald-400 hover:bg-white/10"
+                                title="Save Title"
+                              >
+                                <Check className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingFeatureId(null)}
+                                className="rounded p-1 text-slate-400 hover:bg-white/10"
+                                title="Cancel"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 group min-w-0">
+                              <h4
+                                onClick={() => handleStartRenameFeature(feat)}
+                                className="text-xs font-semibold text-white hover:text-indigo-300 cursor-pointer transition truncate"
+                                title="Click to rename feature"
+                              >
+                                {feat.title}
+                              </h4>
+                              <button
+                                type="button"
+                                onClick={() => handleStartRenameFeature(feat)}
+                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-400 hover:text-white transition"
+                                title="Rename feature"
+                              >
+                                <Edit2 className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          )}
                           <Badge
                             variant="outline"
-                            className={`text-[10px] uppercase ${
-                              feat.priority === 'high'
-                                ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                                : feat.priority === 'medium'
+                            className={`text-[10px] uppercase shrink-0 ${feat.priority === 'high'
+                              ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                              : feat.priority === 'medium'
                                 ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
                                 : 'border-blue-500/30 bg-blue-500/10 text-blue-300'
-                            }`}
+                              }`}
                           >
                             {feat.priority}
                           </Badge>
@@ -683,11 +822,10 @@ export function ProductWorkspace({
                             key={statusKey}
                             type="button"
                             onClick={() => setTaskFilterStatus(statusKey)}
-                            className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition ${
-                              taskFilterStatus === statusKey
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-                            }`}
+                            className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition ${taskFilterStatus === statusKey
+                              ? 'bg-indigo-600 text-white'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+                              }`}
                           >
                             {statusKey}
                           </button>
@@ -703,21 +841,68 @@ export function ProductWorkspace({
                           className="rounded-xl border border-white/10 bg-[#0f1128] p-4 transition hover:border-white/20 space-y-3"
                         >
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-xs font-bold text-white">{task.title}</h4>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              {editingTaskId === task.id ? (
+                                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                  <input
+                                    type="text"
+                                    value={taskRenameInput}
+                                    onChange={(e) => setTaskRenameInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') void handleConfirmRenameTask(task.id);
+                                      if (e.key === 'Escape') setEditingTaskId(null);
+                                    }}
+                                    autoFocus
+                                    className="rounded border border-indigo-500/50 bg-black/60 px-2 py-0.5 text-xs text-white outline-none w-full"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleConfirmRenameTask(task.id)}
+                                    className="rounded p-1 text-emerald-400 hover:bg-white/10"
+                                    title="Save Title"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingTaskId(null)}
+                                    className="rounded p-1 text-slate-400 hover:bg-white/10"
+                                    title="Cancel"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 group min-w-0">
+                                  <h4
+                                    onClick={() => handleStartRenameTask(task)}
+                                    className="text-xs font-bold text-white hover:text-indigo-300 cursor-pointer transition truncate"
+                                    title="Click to rename task"
+                                  >
+                                    {task.title}
+                                  </h4>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartRenameTask(task)}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-400 hover:text-white transition"
+                                    title="Rename task"
+                                  >
+                                    <Edit2 className="h-2.5 w-2.5" />
+                                  </button>
+                                </div>
+                              )}
                               <Badge
                                 variant="outline"
-                                className={`text-[10px] uppercase ${
-                                  task.priority === 'high'
-                                    ? 'border-red-500/30 bg-red-500/10 text-red-300'
-                                    : 'border-blue-500/30 bg-blue-500/10 text-blue-300'
-                                }`}
+                                className={`text-[10px] uppercase shrink-0 ${task.priority === 'high'
+                                  ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                                  : 'border-blue-500/30 bg-blue-500/10 text-blue-300'
+                                  }`}
                               >
                                 {task.priority}
                               </Badge>
                               <Badge
                                 variant="outline"
-                                className="text-[10px] border-purple-500/30 bg-purple-500/10 text-purple-300 uppercase"
+                                className="text-[10px] border-purple-500/30 bg-purple-500/10 text-purple-300 uppercase shrink-0"
                               >
                                 {task.type || task.category || 'component'}
                               </Badge>

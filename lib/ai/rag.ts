@@ -148,7 +148,7 @@ export async function indexProjectFiles(
             `File: ${chunk.filePath}\nContent:\n${chunk.content}`
           );
 
-          await (supabase as any).from('project_embeddings').upsert(
+          await supabase.from('project_embeddings').upsert(
             {
               project_id: projectId,
               file_id: file.id,
@@ -191,7 +191,7 @@ export async function retrieveContextForPrompt(
   try {
     const queryEmbedding = await getGeminiEmbedding(prompt);
 
-    const { data: rows, error } = await (supabase as any)
+    const { data: rows, error } = await supabase
       .from('project_embeddings')
       .select('id, content, embedding, metadata')
       .eq('project_id', projectId);
@@ -204,14 +204,14 @@ export async function retrieveContextForPrompt(
 
     for (const row of rows) {
       if (!row.embedding || !Array.isArray(row.embedding)) continue;
-      const sim = cosineSimilarity(queryEmbedding, row.embedding);
-      const meta = row.metadata || {};
+      const sim = cosineSimilarity(queryEmbedding, row.embedding as unknown as number[]);
+      const meta = (row.metadata as Record<string, unknown>) || {};
       scored.push({
-        filePath: meta.path || 'unknown',
+        filePath: typeof meta.path === 'string' ? meta.path : 'unknown',
         content: row.content,
         similarity: sim,
-        startLine: meta.startLine || 1,
-        endLine: meta.endLine || 1,
+        startLine: typeof meta.startLine === 'number' ? meta.startLine : 1,
+        endLine: typeof meta.endLine === 'number' ? meta.endLine : 1,
       });
     }
 

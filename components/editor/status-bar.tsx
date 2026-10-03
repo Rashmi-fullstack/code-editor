@@ -9,6 +9,7 @@ import {
   Play,
 } from 'lucide-react';
 
+
 export interface StatusBarProps {
   dirty: boolean;
   language: string;
@@ -16,6 +17,7 @@ export interface StatusBarProps {
   cursorCol: number;
   previewError: string | null;
   isWorking: boolean;
+  model?: string;
   onOpenPreviewError?: () => void;
 }
 
@@ -101,16 +103,16 @@ export function StatusBar({
 
         <span className="text-slate-600">•</span>
 
-        {/* AI Agent Status */}
+        {/* AI Agent Status (Model names hidden per Phase 14) */}
         {isWorking ? (
           <div className="flex items-center gap-1.5 text-indigo-400 font-medium">
             <Loader2 className="h-3 w-3 animate-spin" />
-            <span>Gemini Generating…</span>
+            <span>AI Generating…</span>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 text-indigo-400/80 font-medium">
             <Sparkles className="h-3 w-3 text-indigo-400" />
-            <span>Gemini Flash</span>
+            <span>AI Assistant</span>
           </div>
         )}
 

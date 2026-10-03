@@ -1,11 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, Suspense, useCallback, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Loader2 } from "lucide-react";
 import GoogleSignIn from "@/components/google-sign-in";
-import { useAuth } from "@/components/auth-provider";
+import { useAuth, type User } from "@/components/auth-provider";
 import { AuthShell, Divider, Field } from "@/components/auth-shell";
 
 function LoginForm() {
@@ -17,33 +16,45 @@ function LoginForm() {
     search.get("registered") ? "Account created. Log in to continue." : ""
   );
   const [pending, setPending] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
 
-  const finish = useCallback(async () => {
-    await refresh();
-    const nextUrl = search.get("next") || "/editor";
-    router.push(nextUrl);
-    router.refresh();
-  }, [refresh, router, search]);
+  const finish = useCallback(
+    async (optimisticUser?: User) => {
+      await refresh(optimisticUser);
+      // Strictly default to Home ("/") unless an explicit non-editor return URL was requested
+      const rawNext = search.get("next");
+      const nextUrl =
+        rawNext && rawNext !== "/editor" && rawNext.startsWith("/") ? rawNext : "/";
+      router.push(nextUrl);
+      router.refresh();
+    },
+    [refresh, router, search]
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setPending(true);
     setMessage("");
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
 
-    const data = await response.json();
-    setPending(false);
+      const data = await response.json();
+      setPending(false);
 
-    if (!response.ok) {
-      return setMessage(data.message);
+      if (!response.ok) {
+        return setMessage(data.message || "Failed to log in.");
+      }
+
+      await finish(data.user);
+    } catch {
+      setPending(false);
+      setMessage("Network error occurred during login. Please try again.");
     }
-
-    await finish();
   }
 
   return (
@@ -66,9 +77,15 @@ function LoginForm() {
             {message}
           </p>
         )}
+        {googlePending && (
+          <div className="flex items-center justify-center gap-2.5 rounded-xl border border-indigo-500/30 bg-indigo-950/40 p-3 text-xs sm:text-sm text-indigo-200 animate-pulse">
+            <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+            <span>Completing sign in with Google…</span>
+          </div>
+        )}
         <button
-          disabled={pending}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-linear-to-r from-blue-500 to-purple-600 px-4 py-3 font-medium shadow-lg shadow-blue-500/20 transition hover:to-purple-700 disabled:opacity-60"
+          disabled={pending || googlePending}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-3 font-medium shadow-lg shadow-blue-500/20 transition hover:to-purple-700 disabled:opacity-60 cursor-pointer"
         >
           {pending ? (
             "Logging in..."
@@ -81,7 +98,11 @@ function LoginForm() {
         </button>
       </form>
       <Divider />
-      <GoogleSignIn onSuccess={finish} onError={setMessage} />
+      <GoogleSignIn
+        onSuccess={finish}
+        onError={setMessage}
+        onLoadingChange={setGooglePending}
+      />
     </>
   );
 }
@@ -98,12 +119,6 @@ export default function LoginPage() {
       >
         <LoginForm />
       </Suspense>
-      <p className="mt-7 text-center text-sm text-slate-400">
-        No account?{" "}
-        <Link href="/signup" className="font-medium text-indigo-300 hover:text-white">
-          Register first
-        </Link>
-      </p>
     </AuthShell>
   );
 }

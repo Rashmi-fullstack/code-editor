@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     email TEXT UNIQUE NOT NULL,
     full_name TEXT,
     avatar_url TEXT,
+    credit_limit INTEGER NOT NULL DEFAULT 4,
+    credits_used INTEGER NOT NULL DEFAULT 0,
+    credits_reserved INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -397,3 +400,147 @@ CREATE POLICY "Users can manage embeddings for own projects"
     ON public.project_embeddings FOR ALL
     USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_embeddings.project_id AND p.user_id = auth.uid()))
     WITH CHECK (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_embeddings.project_id AND p.user_id = auth.uid()));
+
+-- ------------------------------------------------------------------------------
+-- 9. User AI Keys Table (BYOK Encryption)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.user_ai_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL DEFAULT 'google-gemini',
+    model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
+    encrypted_key TEXT NOT NULL,
+    key_hint TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_user_provider UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_ai_keys_user_id ON public.user_ai_keys(user_id);
+ALTER TABLE public.user_ai_keys ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can manage own ai keys" ON public.user_ai_keys;
+CREATE POLICY "Users can manage own ai keys"
+    ON public.user_ai_keys FOR ALL
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+-- ------------------------------------------------------------------------------
+-- 10. AI Token Usage Table (Real-time Token Metrics)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.ai_token_usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES public.projects(id) ON DELETE SET NULL,
+    provider TEXT NOT NULL DEFAULT 'google-gemini',
+    model TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
+    operation TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    key_source TEXT NOT NULL DEFAULT 'platform',
+    success BOOLEAN NOT NULL DEFAULT TRUE,
+    credit_used INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_token_usage_user_id ON public.ai_token_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_token_usage_project_id ON public.ai_token_usage(project_id);
+CREATE INDEX IF NOT EXISTS idx_ai_token_usage_created_at ON public.ai_token_usage(created_at DESC);
+
+ALTER TABLE public.ai_token_usage ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own token usage" ON public.ai_token_usage;
+CREATE POLICY "Users can view own token usage"
+    ON public.ai_token_usage FOR SELECT
+    USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert own token usage" ON public.ai_token_usage;
+CREATE POLICY "Users can insert own token usage"
+    ON public.ai_token_usage FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+
+-- ------------------------------------------------------------------------------
+-- 11. Concurrency-Safe Credit Functions
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.reserve_user_credit(
+    p_user_id UUID,
+    p_limit INTEGER DEFAULT 4
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_used INTEGER;
+    v_reserved INTEGER;
+    v_limit INTEGER;
+BEGIN
+    SELECT credits_used, credits_reserved, credit_limit
+    INTO v_used, v_reserved, v_limit
+    FROM public.profiles
+    WHERE id = p_user_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        INSERT INTO public.profiles (id, email, credit_limit, credits_used, credits_reserved)
+        SELECT p_user_id, email, COALESCE(p_limit, 4), 0, 1
+        FROM auth.users
+        WHERE id = p_user_id;
+        RETURN TRUE;
+    END IF;
+
+    v_limit := COALESCE(v_limit, p_limit, 4);
+
+    IF (COALESCE(v_used, 0) + COALESCE(v_reserved, 0)) >= v_limit THEN
+        RETURN FALSE;
+    END IF;
+
+    UPDATE public.profiles
+    SET credits_reserved = COALESCE(credits_reserved, 0) + 1,
+        updated_at = NOW()
+    WHERE id = p_user_id;
+
+    RETURN TRUE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.finalize_user_credit(
+    p_user_id UUID,
+    p_success BOOLEAN
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.profiles
+    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - 1),
+        credits_used = CASE 
+            WHEN p_success THEN COALESCE(credits_used, 0) + 1 
+            ELSE COALESCE(credits_used, 0) 
+        END,
+        updated_at = NOW()
+    WHERE id = p_user_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.release_user_credit(
+    p_user_id UUID
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.profiles
+    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - 1),
+        updated_at = NOW()
+    WHERE id = p_user_id;
+END;
+$$;

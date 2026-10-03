@@ -14,7 +14,6 @@ import {
   Image as ImageIcon,
   ChevronRight,
   ChevronDown,
-  Plus,
   FolderPlus,
   FilePlus,
   Trash2,

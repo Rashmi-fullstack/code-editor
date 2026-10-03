@@ -26,9 +26,11 @@ ${promptComment}
 import React from 'react';
 import { Sparkles, Code2, Rocket, Zap } from 'lucide-react';
 
+const STATIC_YEAR = 2025;
+
 export default function Home() {
   return (
-    <main className="min-h-screen bg-[#0f0f1a] text-white flex flex-col items-center justify-center p-8">
+    <main suppressHydrationWarning className="min-h-screen bg-[#0f0f1a] text-white flex flex-col items-center justify-center p-8">
       <div className="max-w-3xl w-full text-center space-y-6">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
           <Sparkles className="w-4 h-4" />
@@ -59,6 +61,10 @@ export default function Home() {
             <h3 className="font-semibold text-lg">Production Ready</h3>
             <p className="text-sm text-gray-400 mt-1">Backed by Supabase database & authentication.</p>
           </div>
+        </div>
+
+        <div className="text-xs uppercase tracking-[0.28em] text-slate-500">
+          Since {STATIC_YEAR}
         </div>
       </div>
     </main>
@@ -150,12 +156,77 @@ export function Navbar() {
           name: sanitizedName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
           version: '0.1.0',
           private: true,
-          dependencies: {
-            next: '^16.0.0',
-            react: '^19.0.0',
-            'react-dom': '^19.0.0',
-            'lucide-react': '^0.400.0',
+          scripts: {
+            dev: 'next dev',
+            build: 'next build',
+            start: 'next start',
           },
+          dependencies: {
+            next: '14.2.24',
+            react: '^18.3.1',
+            'react-dom': '^18.3.1',
+            'lucide-react': '^0.400.0',
+            '@next/swc-wasm-nodejs': '14.2.24',
+          },
+          devDependencies: {
+            typescript: '^5.4.5',
+            '@types/node': '^20.12.7',
+            '@types/react': '^18.3.1',
+            '@types/react-dom': '^18.3.0',
+          },
+        },
+        null,
+        2
+      ),
+      language: 'json',
+      isFolder: false,
+    },
+    {
+      name: 'next.config.js',
+      path: 'next.config.js',
+      content: `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  reactStrictMode: false,
+};
+
+module.exports = nextConfig;
+`,
+      language: 'javascript',
+      isFolder: false,
+    },
+    {
+      name: '.env.local',
+      path: '.env.local',
+      content: `NEXT_TEST_WASM=1\nPORT=3000\n`,
+      language: 'text',
+      isFolder: false,
+    },
+    {
+      name: 'tsconfig.json',
+      path: 'tsconfig.json',
+      content: JSON.stringify(
+        {
+          compilerOptions: {
+            target: 'es5',
+            lib: ['dom', 'dom.iterable', 'esnext'],
+            allowJs: true,
+            skipLibCheck: true,
+            strict: false,
+            noEmit: true,
+            esModuleInterop: true,
+            module: 'esnext',
+            moduleResolution: 'node',
+            resolveJsonModule: true,
+            isolatedModules: true,
+            jsx: 'preserve',
+            incremental: true,
+            plugins: [{ name: 'next' }],
+            paths: {
+              '@/*': ['./*'],
+            },
+          },
+          include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+          exclude: ['node_modules'],
         },
         null,
         2

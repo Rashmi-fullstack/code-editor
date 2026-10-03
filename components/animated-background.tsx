@@ -1,52 +1,135 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
+
+const VIDEO_SRC =
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260912_104303_0c6d60b2-9353-408e-9449-585108a22fb5.mp4';
+const POSTER_SRC =
+  'https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/130837c4-0244-4f37-9c61-8d801d93fd29.jpg';
 
 export default function AnimatedBackground() {
+  const pathname = usePathname();
+  const isHome = pathname === '/';
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.loop = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    video.setAttribute('aria-hidden', 'true');
+
+    const playSafe = () => {
+      if (!isHome || document.visibilityState !== 'visible') return;
+      video.muted = true;
+      video.defaultMuted = true;
+      const res = video.play();
+      if (res && typeof res.catch === 'function') {
+        res.catch(() => {
+          // Browser autoplay restrictions can still delay playback until interaction.
+        });
+      }
+    };
+
+    if (!isHome) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      return;
+    }
+
+    if (!video.src || !video.src.includes('cloudfront.net')) {
+      video.src = VIDEO_SRC;
+    }
+
+    if (video.readyState >= 2) {
+      playSafe();
+    } else {
+      video.addEventListener('loadeddata', playSafe, { once: true });
+      video.addEventListener('canplay', playSafe, { once: true });
+    }
+
+    const handleVisibility = () => {
+      if (!isHome) return;
+      if (document.visibilityState === 'visible') {
+        if (video.paused) playSafe();
+      } else {
+        video.pause();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+    window.addEventListener('pageshow', handleVisibility);
+
+    const onUserInteraction = () => {
+      if (!isHome) return;
+      if (video.paused) playSafe();
+      window.removeEventListener('click', onUserInteraction);
+      window.removeEventListener('touchstart', onUserInteraction);
+      window.removeEventListener('keydown', onUserInteraction);
+    };
+
+    window.addEventListener('click', onUserInteraction, { passive: true });
+    window.addEventListener('touchstart', onUserInteraction, { passive: true });
+    window.addEventListener('keydown', onUserInteraction, { passive: true });
+
+    return () => {
+      video.removeEventListener('loadeddata', playSafe);
+      video.removeEventListener('canplay', playSafe);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+      window.removeEventListener('pageshow', handleVisibility);
+      window.removeEventListener('click', onUserInteraction);
+      window.removeEventListener('touchstart', onUserInteraction);
+      window.removeEventListener('keydown', onUserInteraction);
+    };
+  }, [isHome]);
+
+  // Keep DOM mounted in background so decoded video buffer remains in memory across page navigations,
+  // but strictly hide and pause when on other sections (Projects, Editor, Profile)
   return (
-    <div className="fixed inset-0 -z-10 overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-b from-[#0f0f1a] via-[#1a1a2e] to-[#0f0f1a]" />
-
-      <motion.div
-        className="absolute top-0 left-0 w-96 h-96 bg-blue-500/20 rounded-full blur-[120px]"
-        animate={{
-          x: [0, 100, 0],
-          y: [0, 50, 0],
-        }}
-        transition={{
-          duration: 20,
-          repeat: Infinity,
-          ease: 'easeInOut',
-        }}
+    <div
+      aria-hidden="true"
+      className={`fixed inset-0 z-0 pointer-events-none overflow-hidden select-none bg-[#02060f] transition-opacity duration-300 ${
+        isHome ? 'opacity-100' : 'opacity-0'
+      }`}
+      style={{
+        display: isHome ? 'block' : 'none',
+        backgroundImage: isHome ? `url(${POSTER_SRC})` : 'none',
+        backgroundSize: 'cover',
+        backgroundPosition: '50% 50%',
+      }}
+    >
+      {/* High-Performance Looping Hero Video — 0% bandwidth duplication, seamless native hardware loop */}
+      <video
+        ref={videoRef}
+        src={VIDEO_SRC}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        poster={POSTER_SRC}
+        className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none opacity-90"
       />
 
-      <motion.div
-        className="absolute top-1/4 right-0 w-96 h-96 bg-purple-500/20 rounded-full blur-[120px]"
-        animate={{
-          x: [0, -100, 0],
-          y: [0, 100, 0],
-        }}
-        transition={{
-          duration: 25,
-          repeat: Infinity,
-          ease: 'easeInOut',
+      {/* Atmospheric Volumetric Veil */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: `
+            radial-gradient(140% 60% at 50% 40%, rgba(6, 10, 18, 0.15) 0%, rgba(6, 10, 18, 0.08) 50%, rgba(6, 10, 18, 0.02) 100%),
+            linear-gradient(180deg, rgba(6, 10, 18, 0) 35%, rgba(2, 6, 15, 0.65) 75%, #02060f 100%)
+          `,
         }}
       />
-
-      <motion.div
-        className="absolute bottom-0 left-1/3 w-96 h-96 bg-cyan-500/10 rounded-full blur-[120px]"
-        animate={{
-          x: [0, -50, 0],
-          y: [0, -50, 0],
-        }}
-        transition={{
-          duration: 15,
-          repeat: Infinity,
-          ease: 'easeInOut',
-        }}
-      />
-
-      <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjAzIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-40" />
     </div>
   );
 }

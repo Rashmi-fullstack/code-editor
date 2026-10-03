@@ -4,13 +4,26 @@ import { runGeminiAgent, selectProjectContext, validateAgentResult } from '../ai
 import { indexProjectFiles, retrieveContextForPrompt } from '../ai/rag';
 import type { ProjectFile } from '../types/database';
 
+interface FeatureBuildEventData {
+  projectId: string;
+  taskId?: string;
+  featureTitle: string;
+  requirements?: string;
+}
+
 export const buildFeatureWorkflow = inngest.createFunction(
   {
     id: 'build-feature-workflow',
     name: 'Autonomous Feature Build',
     triggers: [{ event: 'project/feature.build' }],
   },
-  async ({ event, step }: { event: any; step: any }) => {
+  async ({
+    event,
+    step,
+  }: {
+    event: { data: FeatureBuildEventData };
+    step: { run: <T>(id: string, fn: () => Promise<T>) => Promise<T> };
+  }) => {
     const { projectId, taskId, featureTitle, requirements } = event.data;
 
     // Step 1: Fetch Project Context & Files
@@ -42,7 +55,7 @@ export const buildFeatureWorkflow = inngest.createFunction(
 
     // Step 3: Execute AI Coding Agent
     const agentResult = await step.run('generate-code-changes', async () => {
-      const prompt = `Build feature: ${featureTitle}.\nRequirements: ${requirements || 'Standard production implementation'}.\nRelevant context snippets:\n${ragContext.map((c: any) => `--- ${c.filePath} ---\n${c.content}`).join('\n\n')}`;
+      const prompt = `Build feature: ${featureTitle}.\nRequirements: ${requirements || 'Standard production implementation'}.\nRelevant context snippets:\n${ragContext.map((c: { filePath: string; content: string }) => `--- ${c.filePath} ---\n${c.content}`).join('\n\n')}`;
       const context = selectProjectContext(projectData.files);
       const raw = await runGeminiAgent(prompt, context);
       return validateAgentResult(raw, projectData.files);

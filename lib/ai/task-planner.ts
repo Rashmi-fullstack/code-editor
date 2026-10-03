@@ -15,13 +15,19 @@ export interface TechnicalImplementationPlan {
  * Bridges high-level Product Manager development tasks into concrete,
  * architected technical specifications and instructions for the Coding Agent.
  */
+export interface TaskPlannerOptions {
+  aiConfig?: { apiKey: string; model?: string; providerId?: string; keySource?: string };
+  onUsage?: (usage: { inputTokens: number; outputTokens: number; totalTokens: number }) => void;
+}
+
 export async function planTechnicalTask(
   task: DevelopmentTask,
-  existingFiles: ProjectFile[]
+  existingFiles: ProjectFile[],
+  options?: TaskPlannerOptions
 ): Promise<TechnicalImplementationPlan> {
-  const key = process.env.GEMINI_API_KEY?.trim();
-  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.');
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const key = options?.aiConfig?.apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
+  if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env or add your personal API key in Profile.');
+  const model = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const fileTree = existingFiles.map((f) => f.path);
   const affected = task.affectedFiles || [];
@@ -91,7 +97,9 @@ Return ONLY JSON matching this schema:
 
   if (!response?.ok) {
     if (response && [429, 500, 502, 503, 504].includes(response.status)) {
-      throw new GeminiUnavailableError('Gemini Architect is temporarily busy. Please retry.');
+      throw new GeminiUnavailableError(
+        failure ? `Gemini Architect is temporarily busy: ${failure}` : 'Gemini Architect is temporarily busy. Please retry.'
+      );
     }
     // Fallback if Gemini fails
     return {
@@ -105,7 +113,20 @@ Return ONLY JSON matching this schema:
 
   const payload = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: {
+      candidatesTokenCount?: number;
+      promptTokenCount?: number;
+      totalTokenCount?: number;
+    };
   };
+
+  if (options?.onUsage && payload.usageMetadata) {
+    const inputTokens = payload.usageMetadata.promptTokenCount ?? 0;
+    const outputTokens = payload.usageMetadata.candidatesTokenCount ?? 0;
+    const totalTokens = payload.usageMetadata.totalTokenCount ?? (inputTokens + outputTokens);
+    options.onUsage({ inputTokens, outputTokens, totalTokens });
+  }
+
   const text = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
 
   try {

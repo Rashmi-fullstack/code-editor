@@ -8,6 +8,12 @@ export async function updateSession(request: NextRequest) {
     request,
   });
 
+  const pathname = request.nextUrl.pathname;
+  if (pathname.startsWith('/editor')) {
+    supabaseResponse.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+    supabaseResponse.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  }
+
   if (!isSupabaseConfigured()) {
     return supabaseResponse;
   }
@@ -24,6 +30,10 @@ export async function updateSession(request: NextRequest) {
         supabaseResponse = NextResponse.next({
           request,
         });
+        if (pathname.startsWith('/editor')) {
+          supabaseResponse.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+          supabaseResponse.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+        }
         cookiesToSet.forEach(({ name, value, options }) =>
           supabaseResponse.cookies.set(name, value, options)
         );
@@ -37,18 +47,33 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
-
-  // Protect the editor route if unauthenticated
-  const isProtectedPath = pathname.startsWith('/editor');
-
-  if (!user && isProtectedPath) {
-    if (process.env.NODE_ENV === 'production') {
+  // Handle /developer route shortcut
+  if (pathname === '/developer') {
+    if (!user) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = '/login';
-      redirectUrl.searchParams.set('next', pathname);
+      redirectUrl.searchParams.set('next', '/editor?view=developer');
       return NextResponse.redirect(redirectUrl);
     }
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = '/editor';
+    redirectUrl.searchParams.set('view', 'developer');
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  // Protect the editor, projects, profile, and developer routes if unauthenticated
+  const isProtectedPath =
+    pathname.startsWith('/editor') ||
+    pathname.startsWith('/projects') ||
+    pathname.startsWith('/profile') ||
+    pathname.startsWith('/developer');
+
+  if (!user && isProtectedPath && process.env.NODE_ENV === 'production') {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = '/login';
+    const nextPath = pathname + request.nextUrl.search;
+    redirectUrl.searchParams.set('next', nextPath);
+    return NextResponse.redirect(redirectUrl);
   }
 
   return supabaseResponse;

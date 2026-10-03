@@ -1,7 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Project } from '../types/database';
+import { getProjectFiles, batchUpsertFiles, type FileInput } from './files';
+import { getProductPlanFromDb, saveProductPlanToDb } from './product';
 import { getDefaultProjectFiles } from './starter-template';
-import { batchUpsertFiles } from './files';
+
+export type StartingMode = 'product' | 'developer' | 'blank';
 
 export type CreateProjectInput = {
   name: string;
@@ -106,6 +109,59 @@ export async function createProject(
 }
 
 /**
+ * Create a new project with a selected starting mode ('product' | 'developer' | 'blank').
+ */
+export async function createProjectWithMode(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  input: {
+    name: string;
+    description?: string;
+    mode: StartingMode;
+    framework?: string;
+  }
+): Promise<{ data: Project | null; error: Error | null }> {
+  try {
+    const { data: project, error: createErr } = await createProject(supabase, userId, {
+      name: input.name,
+      description: input.description,
+      framework: input.framework || 'nextjs',
+      isPublic: false,
+    });
+
+    if (createErr || !project) {
+      return { data: null, error: createErr };
+    }
+
+    // User projects must start EMPTY for Developer IDE.
+    // Do NOT automatically generate starter files (e.g. app/page.tsx, package.json).
+    // Files should only be created when the user enters an AI prompt and clicks "Build App" or creates files manually.
+
+    // If starting in Product Manager mode, initialize an empty product plan record
+    if (input.mode === 'product') {
+      try {
+        await supabase.from('product_plans').insert({
+          project_id: project.id,
+          vision: { purpose: '', valueProposition: '', targetOutcome: '' },
+          personas: [],
+          mvp: { mustHave: [], exclusions: [] },
+          features: [],
+          roadmap: [],
+        });
+      } catch (pmInitErr) {
+        console.warn('Note: product_plans initial record creation:', pmInitErr);
+      }
+    }
+
+    return { data: project, error: null };
+  } catch (err: unknown) {
+    console.error('Unexpected error in createProjectWithMode:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+
+/**
  * Update project metadata.
  */
 export async function updateProject(
@@ -154,3 +210,58 @@ export async function deleteProject(
     return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
   }
 }
+
+/**
+ * Duplicate an existing project, including its files and product plan.
+ */
+export async function duplicateProject(
+  supabase: SupabaseClient<Database>,
+  sourceProjectId: string,
+  userId: string,
+  customName?: string
+): Promise<{ data: Project | null; error: Error | null }> {
+  try {
+    const { data: source, error: srcErr } = await getProjectById(supabase, sourceProjectId);
+    if (srcErr || !source) {
+      return { data: null, error: new Error(srcErr?.message || 'Source project not found') };
+    }
+
+    const newProjectName = customName || `${source.name} (Copy)`;
+    const { data: newProject, error: createErr } = await createProject(supabase, userId, {
+      name: newProjectName,
+      description: source.description || undefined,
+      prompt: source.prompt || undefined,
+      framework: source.framework || 'nextjs',
+      isPublic: false,
+    });
+
+    if (createErr || !newProject) {
+      return { data: null, error: createErr };
+    }
+
+    // Duplicate files
+    const { data: files } = await getProjectFiles(supabase, sourceProjectId);
+    if (files && files.length > 0) {
+      const fileInputs: FileInput[] = files.map((f) => ({
+        path: f.path,
+        name: f.name,
+        content: f.content,
+        language: f.language,
+        isFolder: f.is_folder,
+      }));
+      await batchUpsertFiles(supabase, newProject.id, fileInputs);
+    }
+
+    // Duplicate product plan & tasks if present
+    const { plan } = await getProductPlanFromDb(supabase, sourceProjectId);
+    if (plan) {
+      await saveProductPlanToDb(supabase, newProject.id, plan);
+    }
+
+    return { data: newProject, error: null };
+  } catch (err: unknown) {
+    console.error(`Unexpected error in duplicateProject (${sourceProjectId}):`, err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+

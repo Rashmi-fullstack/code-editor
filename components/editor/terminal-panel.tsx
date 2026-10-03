@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Terminal as TerminalIcon,
   RotateCcw,
   Trash2,
   AlertCircle,
-  Play,
   Square,
   X,
   Server,
@@ -17,9 +16,10 @@ import { Badge } from '@/components/ui/badge';
 import type { ProjectFile } from '@/lib/types/database';
 import {
   webcontainerManager,
-  type RuntimeState,
   type WebContainerRuntimeSnapshot,
 } from '@/lib/runtime/webcontainer-manager';
+import type { Terminal } from '@xterm/xterm';
+import type { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
 export interface TerminalPanelProps {
@@ -45,10 +45,10 @@ export function TerminalPanel({
   const shellTerminalRef = useRef<HTMLDivElement>(null);
   const serverTerminalRef = useRef<HTMLDivElement>(null);
 
-  const shellXterm = useRef<any>(null);
-  const shellFitAddon = useRef<any>(null);
-  const serverXterm = useRef<any>(null);
-  const serverFitAddon = useRef<any>(null);
+  const shellXterm = useRef<Terminal | null>(null);
+  const shellFitAddon = useRef<FitAddon | null>(null);
+  const serverXterm = useRef<Terminal | null>(null);
+  const serverFitAddon = useRef<FitAddon | null>(null);
 
   // Subscribe to WebContainer snapshot updates
   useEffect(() => {
@@ -66,66 +66,84 @@ export function TerminalPanel({
 
   // Initialize Shell XTerm instance
   useEffect(() => {
-    let term: any = null;
-    let fitAddon: any = null;
+    let term: Terminal | null = null;
+    let fitAddon: FitAddon | null = null;
     let disposed = false;
 
     async function initShell() {
-      if (!shellTerminalRef.current) return;
+      try {
+        if (!shellTerminalRef.current || disposed) return;
 
-      const { Terminal } = await import('@xterm/xterm');
-      const { FitAddon } = await import('@xterm/addon-fit');
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+        ]);
 
-      term = new Terminal({
-        convertEol: true,
-        cursorBlink: true,
-        fontSize: 12,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        theme: {
-          background: '#0a0b16',
-          foreground: '#e2e8f0',
-          cursor: '#818cf8',
-          selectionBackground: '#4338ca',
-          black: '#0f172a',
-          red: '#f87171',
-          green: '#4ade80',
-          yellow: '#facc15',
-          blue: '#60a5fa',
-          magenta: '#c084fc',
-          cyan: '#38bdf8',
-          white: '#f8fafc',
-        },
-      });
+        if (disposed || !shellTerminalRef.current) return;
 
-      fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(shellTerminalRef.current);
-      fitAddon.fit();
+        const targetEl = shellTerminalRef.current;
+        targetEl.innerHTML = '';
 
-      shellXterm.current = term;
-      shellFitAddon.current = fitAddon;
+        term = new Terminal({
+          convertEol: true,
+          cursorBlink: true,
+          fontSize: 12,
+          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          theme: {
+            background: '#0a0b16',
+            foreground: '#e2e8f0',
+            cursor: '#818cf8',
+            selectionBackground: '#4338ca',
+            black: '#0f172a',
+            red: '#f87171',
+            green: '#4ade80',
+            yellow: '#facc15',
+            blue: '#60a5fa',
+            magenta: '#c084fc',
+            cyan: '#38bdf8',
+            white: '#f8fafc',
+          },
+        });
 
-      term.writeln('\x1b[1;34m=== Codatron.ai Interactive Shell ===\x1b[0m');
-      term.writeln('\x1b[90mConnected to WebContainer persistent kernel.\x1b[0m');
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
 
-      // Forward user keystrokes directly to WebContainer persistent shell
-      term.onData((data: string) => {
-        webcontainerManager.writeShell(data);
-      });
-
-      // Subscribe to shell output
-      const unsubShell = webcontainerManager.subscribeShellOutput((chunk) => {
-        if (!disposed && term) {
-          term.write(chunk);
+        if (disposed || !shellTerminalRef.current) {
+          term.dispose();
+          return;
         }
-      });
 
-      // Boot and initialize shell
-      void webcontainerManager.boot();
+        term.open(targetEl);
+        try {
+          fitAddon.fit();
+        } catch {}
 
-      return () => {
-        unsubShell();
-      };
+        shellXterm.current = term;
+        shellFitAddon.current = fitAddon;
+
+        term.writeln('\x1b[1;34m=== Codatron.ai Interactive Shell ===\x1b[0m');
+        term.writeln('\x1b[90mConnected to WebContainer persistent kernel.\x1b[0m');
+
+        // Forward user keystrokes directly to WebContainer persistent shell
+        term.onData((data: string) => {
+          webcontainerManager.writeShell(data);
+        });
+
+        // Subscribe to shell output
+        const unsubShell = webcontainerManager.subscribeShellOutput((chunk) => {
+          if (!disposed && term) {
+            term.write(chunk);
+          }
+        });
+
+        // The lifecycle is owned by the editor runtime; avoid a second boot here,
+        // because WebContainer only allows a single boot per browser session.
+        return () => {
+          unsubShell();
+        };
+      } catch (err) {
+        console.warn('[TerminalPanel] Failed to initialize shell terminal:', err);
+      }
     }
 
     const cleanupPromise = initShell();
@@ -136,62 +154,83 @@ export function TerminalPanel({
       try {
         term?.dispose();
       } catch {}
+      shellXterm.current = null;
+      shellFitAddon.current = null;
     };
   }, []);
 
   // Initialize Server Logs XTerm instance
   useEffect(() => {
-    let term: any = null;
-    let fitAddon: any = null;
+    let term: Terminal | null = null;
+    let fitAddon: FitAddon | null = null;
     let disposed = false;
 
     async function initServerLogs() {
-      if (!serverTerminalRef.current) return;
+      try {
+        if (!serverTerminalRef.current || disposed) return;
 
-      const { Terminal } = await import('@xterm/xterm');
-      const { FitAddon } = await import('@xterm/addon-fit');
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import('@xterm/xterm'),
+          import('@xterm/addon-fit'),
+        ]);
 
-      term = new Terminal({
-        convertEol: true,
-        cursorBlink: false,
-        disableStdin: true,
-        fontSize: 12,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        theme: {
-          background: '#0a0b16',
-          foreground: '#e2e8f0',
-          selectionBackground: '#4338ca',
-          black: '#0f172a',
-          red: '#f87171',
-          green: '#4ade80',
-          yellow: '#facc15',
-          blue: '#60a5fa',
-          magenta: '#c084fc',
-          cyan: '#38bdf8',
-          white: '#f8fafc',
-        },
-      });
+        if (disposed || !serverTerminalRef.current) return;
 
-      fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(serverTerminalRef.current);
-      fitAddon.fit();
+        const targetEl = serverTerminalRef.current;
+        targetEl.innerHTML = '';
 
-      serverXterm.current = term;
-      serverFitAddon.current = fitAddon;
+        term = new Terminal({
+          convertEol: true,
+          cursorBlink: false,
+          disableStdin: true,
+          fontSize: 12,
+          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          theme: {
+            background: '#0a0b16',
+            foreground: '#e2e8f0',
+            selectionBackground: '#4338ca',
+            black: '#0f172a',
+            red: '#f87171',
+            green: '#4ade80',
+            yellow: '#facc15',
+            blue: '#60a5fa',
+            magenta: '#c084fc',
+            cyan: '#38bdf8',
+            white: '#f8fafc',
+          },
+        });
 
-      term.writeln('\x1b[1;36m=== Codatron.ai Dev Server & Build Output ===\x1b[0m');
+        fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
 
-      // Subscribe to dev output
-      const unsubDev = webcontainerManager.subscribeDevOutput((chunk) => {
-        if (!disposed && term) {
-          term.write(chunk);
+        if (disposed || !serverTerminalRef.current) {
+          term.dispose();
+          return;
         }
-      });
 
-      return () => {
-        unsubDev();
-      };
+        term.open(targetEl);
+        try {
+          fitAddon.fit();
+        } catch {}
+
+        serverXterm.current = term;
+        serverFitAddon.current = fitAddon;
+
+        term.writeln('\x1b[1;36m=== Codatron.ai Dev Server & Build Output ===\x1b[0m');
+
+        // Subscribe to dev output
+        const unsubDev = webcontainerManager.subscribeDevOutput((chunk) => {
+          if (!disposed && term) {
+            term.write(chunk);
+          }
+        });
+
+        return () => {
+          unsubDev();
+        };
+      } catch (err) {
+        console.warn('[TerminalPanel] Failed to initialize server logs terminal:', err);
+      }
     }
 
     const cleanupPromise = initServerLogs();
@@ -202,6 +241,8 @@ export function TerminalPanel({
       try {
         term?.dispose();
       } catch {}
+      serverXterm.current = null;
+      serverFitAddon.current = null;
     };
   }, []);
 
@@ -238,7 +279,7 @@ export function TerminalPanel({
   };
 
   const handleRestart = () => {
-    void webcontainerManager.restartDevServer(files);
+    void webcontainerManager.runProject(files, 'active-project', false);
   };
 
   const handleInterrupt = () => {

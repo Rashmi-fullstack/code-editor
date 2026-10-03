@@ -1,38 +1,19 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import Link from "next/link";
-import {
-  motion,
-  AnimatePresence,
-  useScroll,
-  useSpring,
-  useTransform,
-  useReducedMotion,
-} from "framer-motion";
-import { Menu, X, Sparkles, ArrowRight } from "lucide-react";
-import { useAuth } from "@/components/auth-provider";
-
-// ---------------------------------------------------------------------------
-// INTEGRATION NOTE:
-// Built standalone without access to the project's routes/tailwind/theme
-// files. Swap these four values for the real ones already in the app before
-// shipping — do not ship placeholder hrefs:
-//   Features / How It Works / Pricing -> real section ids or routes
-//   Login       -> "/login"      (existing auth route)
-//   Get Started -> "/get-started" (existing signup/onboarding route)
-// If routes are real pages (not in-page anchors), swap the scroll-spy logic
-// below for `usePathname()` from "next/navigation" to drive the active state.
-// ---------------------------------------------------------------------------
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Sparkles, ArrowRight, Menu, X } from 'lucide-react';
+import { useAuth } from '@/components/auth-provider';
 
 const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
+  { label: 'Roles', href: '#roles' },
+  { label: 'Features', href: '#features' },
+  { label: 'How It Works', href: '#how-it-works' },
 ] as const;
 
-const LOGIN_HREF = "/login";
-const GET_STARTED_HREF = "/signup";
+const LOGIN_HREF = '/login';
+const GET_STARTED_HREF = '/signup';
 
 export default function Navbar() {
   const { user, isLoading, logout } = useAuth();
@@ -40,60 +21,11 @@ export default function Navbar() {
   const [hoveredLink, setHoveredLink] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>(null);
 
-  const prefersReducedMotion = useReducedMotion();
   const navRef = useRef<HTMLElement>(null);
 
-  // --- Scroll-driven glass intensity (smooth motion values, no re-renders) ---
-  const { scrollY } = useScroll();
-  const glassOpacity = useTransform(scrollY, [0, 120], [0.55, 0.82]);
-  const glassBlur = useTransform(scrollY, [0, 120], [14, 22]);
-  const borderOpacity = useTransform(scrollY, [0, 120], [0.08, 0.14]);
-  const shadowStrength = useTransform(scrollY, [0, 120], [0.22, 0.4]);
-
-  const backdropFilter = useTransform(glassBlur, (v) => `blur(${v}px)`);
-  const backgroundColor = useTransform(
-    glassOpacity,
-    (v) => `rgba(8, 11, 24, ${v})`
-  );
-  const borderColor = useTransform(
-    borderOpacity,
-    (v) => `rgba(255, 255, 255, ${v})`
-  );
-  const boxShadow = useTransform(
-    shadowStrength,
-    (v) => `0 8px 32px -12px rgba(99, 102, 241, ${v}), 0 1px 0 0 rgba(255,255,255,0.05) inset`
-  );
-
-  // --- Subtle pointer-follow tilt (transform-only, rAF-throttled) ---
-  const rotateX = useSpring(0, { stiffness: 300, damping: 30, mass: 0.5 });
-  const rotateY = useSpring(0, { stiffness: 300, damping: 30, mass: 0.5 });
-  const rafRef = useRef<number | null>(null);
-
-  const handlePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLElement>) => {
-      if (prefersReducedMotion) return;
-      const el = navRef.current;
-      if (!el) return;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => {
-        const rect = el.getBoundingClientRect();
-        const px = (e.clientX - rect.left) / rect.width - 0.5; // -0.5 .. 0.5
-        const py = (e.clientY - rect.top) / rect.height - 0.5;
-        rotateY.set(px * 3); // max ~1.5deg
-        rotateX.set(-py * 3); // max ~1.5deg
-      });
-    },
-    [prefersReducedMotion, rotateX, rotateY]
-  );
-
-  const handlePointerLeave = useCallback(() => {
-    rotateX.set(0);
-    rotateY.set(0);
-  }, [rotateX, rotateY]);
-
-  // --- Scroll-spy: highlight the section currently in view ---
+  // Scroll spy to highlight active section in view
   useEffect(() => {
-    const ids = NAV_LINKS.map((l) => l.href.replace("#", ""));
+    const ids = NAV_LINKS.map((l) => l.href.replace('#', ''));
     const targets = ids
       .map((id) => document.getElementById(id))
       .filter((el): el is HTMLElement => Boolean(el));
@@ -107,23 +39,27 @@ export default function Navbar() {
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
         if (visible) setActiveSection(`#${visible.target.id}`);
       },
-      { rootMargin: "-45% 0px -45% 0px", threshold: [0, 0.25, 0.5, 0.75, 1] }
+      { rootMargin: '-30% 0px -50% 0px', threshold: [0, 0.2, 0.5, 0.8] }
     );
 
     targets.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, []);
 
-  // Close mobile menu on escape, lock scroll while open
+  // Close mobile menu on Escape key or outside click
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMobileOpen(false);
+      if (e.key === 'Escape') setMobileOpen(false);
     };
-    window.addEventListener("keydown", onKey);
-    document.body.style.overflow = mobileOpen ? "hidden" : "";
+    window.addEventListener('keydown', onKey);
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
     return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
     };
   }, [mobileOpen]);
 
@@ -131,291 +67,262 @@ export default function Navbar() {
 
   return (
     <motion.header
-      initial={{ opacity: 0, y: -20, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-      className="fixed inset-x-0 top-4 z-50 mx-auto px-3 max-w-5xl sm:top-5 sm:px-4"
-      style={{ perspective: 1400 }}
+      initial={{ opacity: 0, y: -16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+      className="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-4 sm:pt-6 pointer-events-none"
     >
-      <NavbarBackground reduceMotion={Boolean(prefersReducedMotion)} />
-
-      <motion.nav
+      <nav
         ref={navRef}
-        onPointerMove={handlePointerMove}
-        onPointerLeave={handlePointerLeave}
-        style={{
-          backdropFilter,
-          WebkitBackdropFilter: backdropFilter,
-          backgroundColor,
-          borderColor,
-          boxShadow,
-          rotateX,
-          rotateY,
-          transformStyle: "preserve-3d",
-        }}
-        className="relative flex items-center justify-between rounded-full border px-4 py-2.5 sm:px-5"
         aria-label="Primary"
+        className="pointer-events-auto relative flex items-center justify-between w-full max-w-5xl h-14 px-4 sm:px-5 rounded-full border transition-all duration-300"
+        style={{
+          background: 'rgba(6, 10, 18, 0.72)',
+          backdropFilter: 'blur(20px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.4)',
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          boxShadow:
+            '0 12px 36px -10px rgba(0, 0, 0, 0.65), 0 0 24px -6px rgba(99, 102, 241, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.15)',
+        }}
       >
-        {/* subtle top edge light */}
+        {/* Subtle top edge specular reflection */}
         <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-indigo-300/40 to-transparent"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent"
         />
 
-        {/* Logo */}
+        {/* Brand Logo */}
         <Link
           href="/"
-          className="group flex items-center gap-2 rounded-full px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+          className="group flex items-center gap-2.5 rounded-full py-1 pr-2 pl-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
         >
-          <span className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-500/90 to-purple-600 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.35),inset_0_-2px_4px_0_rgba(0,0,0,0.25),0_0_16px_-4px_rgba(129,140,248,0.85)] transition-transform duration-300 ease-out group-hover:-translate-y-px group-hover:rotate-6 group-hover:scale-105">
-            <Sparkles className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
-          </span>
-          <span className="text-[15px] font-semibold tracking-tight text-white">
-            Codatron
+          <div className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400/20 via-indigo-500/30 to-blue-600/30 border border-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_0_12px_rgba(99,102,241,0.4)] transition-transform duration-300 group-hover:scale-105">
+            <Sparkles className="h-3.5 w-3.5 text-indigo-300 group-hover:text-white transition-colors" />
+          </div>
+          <span className="text-[15px] font-semibold tracking-wide text-white flex items-center">
+            Codatron<span className="text-indigo-400 font-normal text-xs ml-0.5">.ai</span>
           </span>
         </Link>
 
-        {/* Desktop center links */}
+        {/* Desktop Navigation Links */}
         <ul
-          className="relative hidden items-center gap-1 md:flex"
+          className="hidden md:flex items-center gap-1 relative"
           onMouseLeave={() => setHoveredLink(null)}
         >
-          {NAV_LINKS.map((link) => (
-            <li key={link.href} className="relative">
-              <a
-                href={link.href}
-                onMouseEnter={() => setHoveredLink(link.href)}
-                className="relative z-10 block rounded-full px-4 py-2 text-sm text-slate-300 transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-              >
-                <motion.span
-                  className="inline-block"
-                  whileHover={prefersReducedMotion ? undefined : { y: -1 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
+          {NAV_LINKS.map((link) => {
+            const isHovered = hoveredLink === link.href;
+            const isActive = activeSection === link.href;
+
+            return (
+              <li key={link.href} className="relative">
+                <a
+                  href={link.href}
+                  onMouseEnter={() => setHoveredLink(link.href)}
+                  className="relative z-10 block rounded-full px-3.5 py-1.5 text-[13px] font-medium tracking-tight text-slate-300 transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
                 >
                   {link.label}
-                </motion.span>
-              </a>
-              {pillTarget === link.href && (
-                <motion.span
-                  layoutId="nav-pill"
-                  className="absolute inset-0 z-0 rounded-full bg-white/[0.07] ring-1 ring-inset ring-white/10"
-                  transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                />
-              )}
-              {activeSection === link.href && hoveredLink !== link.href && (
-                <motion.span
-                  layoutId="nav-active-dot"
-                  className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-indigo-400 shadow-[0_0_6px_1px_rgba(129,140,248,0.9)]"
-                  transition={{ type: "spring", stiffness: 500, damping: 35 }}
-                />
-              )}
-            </li>
-          ))}
+                </a>
+
+                {pillTarget === link.href && (
+                  <motion.span
+                    layoutId="nav-pill"
+                    className="absolute inset-0 z-0 rounded-full bg-white/[0.08] ring-1 ring-inset ring-white/10"
+                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  />
+                )}
+
+                {isActive && !isHovered && (
+                  <motion.span
+                    layoutId="nav-active-dot"
+                    className="absolute -bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-indigo-400 shadow-[0_0_6px_rgba(129,140,248,0.9)]"
+                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
 
-        {/* Desktop right actions */}
-        <div className="hidden items-center gap-2 md:flex">
+        {/* Desktop Auth & Primary Action */}
+        <div className="hidden md:flex items-center gap-2.5">
           {!isLoading && user ? (
             <>
-              <span className="max-w-32 truncate px-2 text-sm text-slate-300 font-medium">
+              <Link
+                href="/projects"
+                className="rounded-full px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.06] transition-colors border border-white/5"
+              >
+                My Projects
+              </Link>
+              <Link
+                href="/profile"
+                className="max-w-[130px] truncate text-xs text-slate-300 hover:text-white font-medium px-2.5 py-1.5 rounded-full hover:bg-white/[0.06] border border-transparent hover:border-white/10 transition-colors"
+                title="View Profile & AI Settings"
+              >
                 {user.name}
-              </span>
+              </Link>
               <button
                 onClick={() => void logout()}
-                className="rounded-full px-3 py-1.5 text-xs text-slate-400 transition-colors hover:text-white hover:bg-white/5"
+                className="rounded-full px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors"
               >
                 Log out
               </button>
+              <Link
+                href="/editor"
+                className="relative inline-flex items-center gap-1.5 h-8 px-4 rounded-full text-xs font-medium text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98] shadow-md shadow-indigo-500/20"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(99, 102, 241, 0.95) 0%, rgba(79, 70, 229, 0.95) 100%)',
+                  boxShadow:
+                    'inset 0 1px 0 0 rgba(255, 255, 255, 0.3), 0 4px 14px rgba(79, 70, 229, 0.4)',
+                }}
+              >
+                Open Editor
+                <ArrowRight className="h-3 w-3" />
+              </Link>
             </>
           ) : (
-            <Link
-              href={LOGIN_HREF}
-              className="rounded-full px-4 py-2 text-sm text-slate-300 transition-colors duration-200 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-            >
-              Login
-            </Link>
-          )}
-          <motion.div
-            whileHover={
-              prefersReducedMotion ? undefined : { scale: 1.03, y: -1 }
-            }
-            whileTap={prefersReducedMotion ? undefined : { scale: 0.98 }}
-            transition={{ type: "spring", stiffness: 400, damping: 18 }}
-            className="group/cta"
-          >
-            <Link
-              href={user ? "/editor" : GET_STARTED_HREF}
-              className="relative flex items-center gap-1.5 rounded-full bg-gradient-to-b from-indigo-400 to-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-[0_1px_0_0_rgba(255,255,255,0.25)_inset,0_4px_16px_-4px_rgba(99,102,241,0.6)] transition-shadow duration-300 group-hover/cta:shadow-[0_1px_0_0_rgba(255,255,255,0.3)_inset,0_8px_24px_-4px_rgba(129,140,248,0.85)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-            >
-              {user ? "Open Editor" : "Get Started"}
-              <ArrowRight className="h-3.5 w-3.5 transition-transform duration-300 group-hover/cta:translate-x-0.5" />
-            </Link>
-          </motion.div>
-        </div>
-
-        {/* Mobile menu button */}
-        <button
-          type="button"
-          onClick={() => setMobileOpen((v) => !v)}
-          aria-label={mobileOpen ? "Close menu" : "Open menu"}
-          aria-expanded={mobileOpen}
-          aria-controls="mobile-nav-menu"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-slate-200 transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 md:hidden"
-        >
-          {mobileOpen ? (
-            <X className="h-5 w-5" />
-          ) : (
-            <Menu className="h-5 w-5" />
-          )}
-        </button>
-      </motion.nav>
-
-      {/* Mobile menu panel */}
-      <AnimatePresence>
-        {mobileOpen && (
-          <motion.div
-            id="mobile-nav-menu"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-2 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/85 p-2 shadow-[0_12px_32px_-8px_rgba(99,102,241,0.35)] backdrop-blur-xl md:hidden"
-          >
-            <ul className="flex flex-col">
-              {NAV_LINKS.map((link) => (
-                <li key={link.href}>
-                  <a
-                    href={link.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={`flex items-center justify-between rounded-lg px-4 py-2.5 text-sm transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 ${activeSection === link.href
-                      ? "text-white"
-                      : "text-slate-300"
-                      }`}
-                  >
-                    {link.label}
-                    {activeSection === link.href && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_6px_1px_rgba(129,140,248,0.9)]" />
-                    )}
-                  </a>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-1 flex flex-col gap-2 border-t border-white/10 p-2 pt-3">
+            <>
               <Link
-                href={user ? "/editor" : LOGIN_HREF}
-                onClick={() => setMobileOpen(false)}
-                className="rounded-lg px-4 py-2.5 text-center text-sm text-slate-300 transition-colors hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                href={LOGIN_HREF}
+                className="rounded-full px-3.5 py-1.5 text-[13px] font-medium text-slate-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
               >
-                {user ? "Open editor" : "Login"}
+                Login
               </Link>
               <Link
                 href={GET_STARTED_HREF}
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-b from-indigo-400 to-indigo-600 px-4 py-2.5 text-center text-sm font-medium text-white shadow-[0_1px_0_0_rgba(255,255,255,0.25)_inset,0_4px_16px_-4px_rgba(99,102,241,0.6)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+                className="relative group inline-flex items-center gap-1.5 h-8 px-4 rounded-full text-xs font-medium text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%), linear-gradient(90deg, rgba(255, 226, 178, 0.14) 0%, rgba(150, 196, 244, 0.14) 100%), rgba(15, 23, 42, 0.8)',
+                  backdropFilter: 'blur(16px)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  boxShadow:
+                    '0 0 16px -2px rgba(168, 204, 252, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.35)',
+                }}
               >
                 Get Started
-                <ArrowRight className="h-3.5 w-3.5" />
+                <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5" />
               </Link>
-            </div>
-          </motion.div>
+            </>
+          )}
+        </div>
+
+        {/* Mobile Hamburger Trigger (Accessible >= 44px tap target) */}
+        <button
+          type="button"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav-panel"
+          className="md:hidden relative flex items-center justify-center w-10 h-10 -mr-1 rounded-full text-slate-300 hover:text-white hover:bg-white/[0.08] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+        >
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+      </nav>
+
+      {/* Mobile Menu Dropdown Panel */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <>
+            {/* Scrim / Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden pointer-events-auto"
+            />
+
+            {/* Panel */}
+            <motion.div
+              id="mobile-nav-panel"
+              initial={{ opacity: 0, y: -12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              className="pointer-events-auto absolute top-16 inset-x-4 max-w-md mx-auto z-50 p-4 rounded-2xl border border-white/10 bg-[#070b14]/95 shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-2xl md:hidden"
+            >
+              <ul className="flex flex-col space-y-1">
+                {NAV_LINKS.map((link) => (
+                  <li key={link.href}>
+                    <a
+                      href={link.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={`flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
+                        activeSection === link.href
+                          ? 'bg-white/[0.08] text-white'
+                          : 'text-slate-300 hover:bg-white/[0.05] hover:text-white'
+                      }`}
+                    >
+                      {link.label}
+                      {activeSection === link.href && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                      )}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-3 pt-3 border-t border-white/10 flex flex-col gap-2">
+                {!isLoading && user ? (
+                  <>
+                    <Link
+                      href="/profile"
+                      onClick={() => setMobileOpen(false)}
+                      className="px-3 py-2 rounded-xl text-xs text-slate-300 bg-white/[0.04] hover:bg-white/[0.08] transition flex items-center justify-between"
+                    >
+                      <span>Signed in as <span className="text-white font-medium">{user.name}</span></span>
+                      <span className="text-[11px] text-indigo-400 font-medium">Profile & Settings →</span>
+                    </Link>
+                    <Link
+                      href="/projects"
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center justify-center h-11 rounded-xl text-sm font-medium text-slate-200 bg-white/[0.05] hover:bg-white/[0.09] transition-colors"
+                    >
+                      My Projects
+                    </Link>
+                    <Link
+                      href="/editor"
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-600/30"
+                    >
+                      Open Editor
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                    <button
+                      onClick={() => {
+                        setMobileOpen(false);
+                        void logout();
+                      }}
+                      className="h-10 text-xs text-slate-400 hover:text-white transition-colors"
+                    >
+                      Log out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href={LOGIN_HREF}
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center justify-center h-11 rounded-xl text-sm font-medium text-slate-200 bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+                    >
+                      Login
+                    </Link>
+                    <Link
+                      href={GET_STARTED_HREF}
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-600/30"
+                    >
+                      Get Started
+                      <ArrowRight className="h-4 w-4" />
+                    </Link>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </motion.header>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Subtle "AI network" ambience behind the navbar: a faint grid + a handful of
-// slow-drifting nodes joined by thin lines. Pure CSS/SVG + Framer Motion —
-// no WebGL, no particle library. Hidden on mobile and disabled entirely when
-// the user prefers reduced motion, to keep the navbar cheap on every page.
-// ---------------------------------------------------------------------------
-function NavbarBackground({ reduceMotion }: { reduceMotion: boolean }) {
-  const nodes = [
-    { x: 6, y: 10 },
-    { x: 26, y: 78 },
-    { x: 52, y: 8 },
-    { x: 78, y: 70 },
-    { x: 96, y: 20 },
-  ];
-
-  return (
-    <div
-      aria-hidden
-      className="pointer-events-none absolute -inset-x-6 -inset-y-8 -z-10 hidden overflow-visible opacity-70 sm:block"
-    >
-      {/* faint grid */}
-      <div
-        className="absolute inset-0 opacity-[0.15]"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, rgba(148,163,255,0.5) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,255,0.5) 1px, transparent 1px)",
-          backgroundSize: "28px 28px",
-          maskImage:
-            "radial-gradient(ellipse 60% 100% at 50% 50%, black, transparent)",
-          WebkitMaskImage:
-            "radial-gradient(ellipse 60% 100% at 50% 50%, black, transparent)",
-        }}
-      />
-
-      {/* soft gradient glow */}
-      <div
-        className="absolute left-1/2 top-1/2 h-24 w-[80%] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-40 blur-3xl"
-        style={{
-          background:
-            "radial-gradient(ellipse, rgba(99,102,241,0.35), rgba(147,51,234,0.15) 45%, transparent 70%)",
-        }}
-      />
-
-      {/* connection lines */}
-      <svg
-        className="absolute inset-0 h-full w-full"
-        preserveAspectRatio="none"
-        viewBox="0 0 100 100"
-      >
-        {nodes.slice(0, -1).map((node, i) => {
-          const next = nodes[i + 1];
-          return (
-            <line
-              key={i}
-              x1={node.x}
-              y1={node.y}
-              x2={next.x}
-              y2={next.y}
-              stroke="rgba(129,140,248,0.25)"
-              strokeWidth={0.15}
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
-      </svg>
-
-      {/* floating nodes */}
-      {nodes.map((node, i) =>
-        reduceMotion ? (
-          <span
-            key={i}
-            className="absolute h-1 w-1 rounded-full bg-indigo-300/70"
-            style={{ left: `${node.x}%`, top: `${node.y}%` }}
-          />
-        ) : (
-          <motion.span
-            key={i}
-            className="absolute h-1 w-1 rounded-full bg-indigo-300/70 shadow-[0_0_6px_1px_rgba(129,140,248,0.6)]"
-            style={{ left: `${node.x}%`, top: `${node.y}%` }}
-            animate={{
-              y: [0, i % 2 === 0 ? -5 : 5, 0],
-              opacity: [0.5, 0.9, 0.5],
-            }}
-            transition={{
-              duration: 4 + i,
-              repeat: Infinity,
-              ease: "easeInOut",
-              delay: i * 0.3,
-            }}
-          />
-        )
-      )}
-    </div>
   );
 }

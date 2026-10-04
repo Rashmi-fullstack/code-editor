@@ -96,8 +96,9 @@ if (typeof window === 'undefined') {
       return;
     }
 
+    const coiScope = window.location.pathname.startsWith('/preview') ? '/preview' : '/editor';
     navigator.serviceWorker
-      .register('/coi-serviceworker.js', { scope: '/editor' })
+      .register('/coi-serviceworker.js', { scope: coiScope })
       .then(
         (registration) => {
           registration.addEventListener('updatefound', () => {

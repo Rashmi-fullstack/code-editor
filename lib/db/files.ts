@@ -17,6 +17,9 @@ export async function getProjectFiles(
   supabase: SupabaseClient<Database>,
   projectId: string
 ): Promise<{ data: ProjectFile[] | null; error: Error | null }> {
+  if (!projectId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+    return { data: null, error: null };
+  }
   try {
     const { data, error } = await supabase
       .from('project_files')

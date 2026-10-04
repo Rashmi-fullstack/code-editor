@@ -54,6 +54,7 @@ import {
   getProductWorkspaceName,
   renameDeveloperWorkspace,
   renameProductWorkspace,
+  isValidUuid,
 } from '@/lib/db';
 import { getProductPlanFromDb, saveProductPlanToDb } from '@/lib/db/product';
 import { exportProjectToZip } from '@/lib/export/zip';
@@ -143,6 +144,7 @@ function EditorPageContent() {
 
   // AI Conversation & Stage state
   const [conversation, setConversation] = useState<AiMessage[]>([]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
   const [generationStage, setGenerationStage] = useState<string | undefined>(undefined);
   const [keySource, setKeySource] = useState<'platform' | 'byok'>('platform');
 
@@ -151,7 +153,7 @@ function EditorPageContent() {
 
   // AI & Editor working states
   const [prompt, setPrompt] = useState('');
-  const [activeAiDisplayName, setActiveAiDisplayName] = useState<string>('AI Assistant');
+  const [activeAiDisplayName, setActiveAiDisplayName] = useState<string>('Codatron AI');
   const [selectedCode, setSelectedCode] = useState('');
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const [isWorking, setIsWorking] = useState(false);
@@ -525,6 +527,7 @@ function EditorPageContent() {
         try {
           const cachedFiles = localStorage.getItem(`codatron_files_${queryPid}`);
           const cachedProject = localStorage.getItem(`codatron_project_${queryPid}`);
+          const cachedChat = localStorage.getItem(`codatron_chat_${queryPid}`);
           if (cachedFiles) {
             const parsed = JSON.parse(cachedFiles);
             if (Array.isArray(parsed) && parsed.length > 0) {
@@ -548,6 +551,12 @@ function EditorPageContent() {
               setProject(parsedProj);
             }
           }
+          if (cachedChat) {
+            const parsedChat = JSON.parse(cachedChat);
+            if (Array.isArray(parsedChat) && parsedChat.length > 0) {
+              setConversation(parsedChat);
+            }
+          }
         } catch { }
       }
 
@@ -555,7 +564,7 @@ function EditorPageContent() {
         setProjectStatus((prev) => (prev === 'ready' ? 'ready' : 'loading'));
       }
 
-      if (!user) {
+      if (!user || queryPid === 'local-project' || (queryPid && !isValidUuid(queryPid))) {
         // Local offline development mode
         const localPid = 'local-project';
         let initialFiles: ProjectFile[] = [];
@@ -572,9 +581,17 @@ function EditorPageContent() {
           if (savedPlan) setProductPlan(JSON.parse(savedPlan));
         } catch { }
 
+        try {
+          const cachedChat = localStorage.getItem(`codatron_chat_${localPid}`);
+          if (cachedChat) {
+            const parsed = JSON.parse(cachedChat);
+            if (Array.isArray(parsed) && parsed.length > 0) setConversation(parsed);
+          }
+        } catch { }
+
         setProject({
           id: localPid,
-          user_id: 'local-user',
+          user_id: user ? user.id : 'local-user',
           name: 'Local Project',
           description: 'Local development workspace',
           prompt: null,
@@ -609,7 +626,7 @@ function EditorPageContent() {
         let current: Project | null = null;
         let projectFiles: ProjectFile[] = [];
 
-        if (queryPid) {
+        if (queryPid && isValidUuid(queryPid)) {
           const [fetchedProject, fetchedFiles] = await Promise.all([
             getProjectById(supabase, queryPid),
             getProjectFiles(supabase, queryPid),
@@ -711,18 +728,43 @@ function EditorPageContent() {
                 setDependencies(depsRes.data);
               }
             }),
-          getProjectGenerations(supabase, current.id).then((historyRes) => {
-            if (active && currentSeq === loadSeqRef.current && historyRes.data && historyRes.data.length > 0) {
-              const loadedHistory: AiMessage[] = historyRes.data.slice(0, 15).reverse().map((item) => ({
-                id: item.id,
-                role: 'user',
-                content: item.prompt,
-                timestamp: new Date(item.created_at),
-                status: 'success',
-              }));
-              setConversation(loadedHistory);
-            }
-          }),
+          getProjectGenerations(supabase, current.id)
+            .then((historyRes) => {
+              if (active && currentSeq === loadSeqRef.current) {
+                setIsChatLoading(false);
+                if (historyRes.data && historyRes.data.length > 0) {
+                  const existingCache = localStorage.getItem(`codatron_chat_${current.id}`);
+                  if (!existingCache) {
+                    const loadedHistory: AiMessage[] = [];
+                    const reversedGenerations = [...historyRes.data.slice(0, 10)].reverse();
+                    for (const gen of reversedGenerations) {
+                      loadedHistory.push({
+                        id: `user-${gen.id}`,
+                        role: 'user',
+                        content: gen.prompt,
+                        timestamp: new Date(gen.created_at),
+                      });
+                      loadedHistory.push({
+                        id: `asst-${gen.id}`,
+                        role: 'assistant',
+                        content: 'Done — I updated your project and the preview is ready.',
+                        timestamp: new Date(new Date(gen.created_at).getTime() + 1000),
+                        status: 'success',
+                      });
+                    }
+                    if (loadedHistory.length > 0) {
+                      setConversation(loadedHistory);
+                      try {
+                        localStorage.setItem(`codatron_chat_${current.id}`, JSON.stringify(loadedHistory));
+                      } catch { }
+                    }
+                  }
+                }
+              }
+            })
+            .catch(() => {
+              if (active) setIsChatLoading(false);
+            }),
           fetch('/api/profile/ai-config')
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
@@ -1082,7 +1124,12 @@ function EditorPageContent() {
     overridePrompt?: string,
     targetAiMode?: AiMode,
     referenceImage?: string,
-    options?: { isSilentSelfHeal?: boolean; errorText?: string }
+    options?: {
+      isSilentSelfHeal?: boolean;
+      errorText?: string;
+      conversationHistoryOverride?: AiMessage[];
+      skipUserMessageAppend?: boolean;
+    }
   ) => {
     const effectivePrompt = overridePrompt || prompt;
     if (!project || !effectivePrompt.trim()) return;
@@ -1104,6 +1151,7 @@ function EditorPageContent() {
 
     const userMsgId = `user-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now()}`;
+    const baseConversation = options?.conversationHistoryOverride || conversation;
 
     // For silent auto-fix: do NOT inject a technical instruction user bubble
     let newMessages: AiMessage[];
@@ -1112,7 +1160,7 @@ function EditorPageContent() {
       transitionBuildState('AUTO_FIXING', `Attempt ${selfHealAttemptsRef.current}/3`);
       setGenerationStage('Making a few final adjustments…');
       newMessages = [
-        ...conversation,
+        ...baseConversation,
         {
           id: assistantMsgId,
           role: 'assistant',
@@ -1129,10 +1177,31 @@ function EditorPageContent() {
           currentStage: 'Applying adjustments',
         },
       ];
+    } else if (options?.skipUserMessageAppend) {
+      setGenerationStage('Understanding your request…');
+      newMessages = [
+        ...baseConversation,
+        {
+          id: assistantMsgId,
+          role: 'assistant',
+          content: files.length === 0 ? "Let's build that for you." : 'Updating your app…',
+          mode: modeToUse,
+          timestamp: new Date(),
+          status: 'pending',
+          stages: [
+            'Understanding your request',
+            'Creating the main layout',
+            'Adding visual assets',
+            'Preparing your preview',
+            'Finalizing the experience',
+          ],
+          currentStage: 'Understanding your request',
+        },
+      ];
     } else {
       setGenerationStage('Understanding your request…');
       newMessages = [
-        ...conversation,
+        ...baseConversation,
         {
           id: userMsgId,
           role: 'user',
@@ -1194,7 +1263,7 @@ function EditorPageContent() {
           previewError: previewError || undefined,
           files,
           referenceImage,
-          conversationHistory: conversation.slice(-6).map((m) => ({
+          conversationHistory: baseConversation.slice(-6).map((m) => ({
             role: m.role,
             content: m.content,
           })),
@@ -1343,7 +1412,9 @@ function EditorPageContent() {
           msg.id === assistantMsgId
             ? {
               ...msg,
-              content: isSilent ? 'Everything is ready — preview updated' : (body.summary || 'Your app is ready.'),
+              content: isSilent
+                ? 'I found a small issue in the generated code and fixed it. The preview is working now.'
+                : (body.summary ? (body.summary.startsWith('Done') ? body.summary : `Done — ${body.summary}`) : 'Done — I updated your project and the preview is ready.'),
               status: 'success' as const,
               operations: body.operations,
               filesCount: nextFiles.length,
@@ -1412,6 +1483,50 @@ function EditorPageContent() {
     setPreviewError(cleanErr);
     await generate(`Diagnose and fix this error: ${cleanErr}`, 'debug');
   };
+
+  // Handle editing a previous user message (ChatGPT-style)
+  const handleEditMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      const idx = conversation.findIndex((m) => m.id === messageId);
+      if (idx === -1 || !newContent.trim()) return;
+
+      const targetMsg = conversation[idx];
+      const updatedUserMsg: AiMessage = {
+        ...targetMsg,
+        content: newContent.trim(),
+        timestamp: new Date(),
+      };
+
+      // Keep conversation strictly up to this edited user message
+      const truncatedHistory = [...conversation.slice(0, idx), updatedUserMsg];
+      setPrompt('');
+      await generate(newContent.trim(), aiMode, targetMsg.attachedImage, {
+        conversationHistoryOverride: truncatedHistory,
+        skipUserMessageAppend: true,
+      });
+    },
+    [conversation, aiMode, generate]
+  );
+
+  // Handle regenerating an assistant response
+  const handleRegenerateMessage = useCallback(
+    async (assistantMsgId: string) => {
+      const idx = conversation.findIndex((m) => m.id === assistantMsgId);
+      if (idx === -1) return;
+
+      // Find the user message directly preceding this assistant response
+      const userMsg = conversation.slice(0, idx).reverse().find((m) => m.role === 'user');
+      if (!userMsg) return;
+
+      // Truncate conversation to right before this assistant message
+      const truncatedHistory = conversation.slice(0, idx);
+      await generate(userMsg.content, aiMode, userMsg.attachedImage, {
+        conversationHistoryOverride: truncatedHistory,
+        skipUserMessageAppend: true,
+      });
+    },
+    [conversation, aiMode, generate]
+  );
 
   // File operations handlers
   const handleCreateFile = async (filePath: string) => {
@@ -1802,6 +1917,9 @@ function EditorPageContent() {
                   }}
                   keySource={keySource}
                   modelDisplayName={activeAiDisplayName}
+                  onEditMessage={handleEditMessage}
+                  onRegenerateMessage={handleRegenerateMessage}
+                  isChatLoading={isChatLoading}
                 />
               </div>
             )}
@@ -2061,6 +2179,7 @@ function EditorPageContent() {
                     isGenerating={isWorking}
                     internalBuildState={internalBuildState}
                     isAutoFixing={internalBuildState === 'AUTO_FIXING'}
+                    projectId={project?.id || queryPid || 'local-project'}
                   />
                 )}
 
@@ -2135,6 +2254,7 @@ function EditorPageContent() {
                         isGenerating={isWorking}
                         internalBuildState={internalBuildState}
                         isAutoFixing={internalBuildState === 'AUTO_FIXING'}
+                        projectId={project?.id || queryPid || 'local-project'}
                       />
                     </div>
                   </div>
@@ -2304,6 +2424,7 @@ function EditorPageContent() {
         onServerReady={(url) => setWebcontainerUrl(url)}
         onErrorDetected={(err) => setPreviewError(err)}
         onFixWithAI={fixWithAI}
+        projectId={project?.id || queryPid || 'local-project'}
       />
     </main>
   );

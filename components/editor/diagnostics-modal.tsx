@@ -40,6 +40,7 @@ export interface DiagnosticsModalProps {
   webcontainerUrl?: string | null;
   previewError?: string | null;
   onFixWithAI?: (errorText: string) => void;
+  projectId?: string;
 }
 
 export function DiagnosticsModal({
@@ -52,6 +53,7 @@ export function DiagnosticsModal({
   webcontainerUrl,
   previewError,
   onFixWithAI,
+  projectId,
 }: DiagnosticsModalProps) {
   const [tab, setTab] = useState<'logs' | 'runtime' | 'dependencies'>('logs');
   const [snapshot, setSnapshot] = useState<WebContainerRuntimeSnapshot>(
@@ -262,19 +264,26 @@ export function DiagnosticsModal({
                 <div>
                   <h4 className="text-xs font-semibold text-white">WebContainer Server Target</h4>
                   <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                    {snapshot.previewUrl || 'Port 3000 (Pending server-ready event)'}
+                    {snapshot.previewUrl || (snapshot.serverPort ? `Port ${snapshot.serverPort} (Verifying runtime target…)` : 'Waiting for dev server to start…')}
                   </p>
                 </div>
-                {snapshot.previewUrl && (
-                  <a
-                    href={snapshot.previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition"
+                {(snapshot.previewUrl || webcontainerUrl) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        const pid =
+                          projectId ||
+                          new URLSearchParams(window.location.search).get('project') ||
+                          'local-project';
+                        window.open(`/preview?project=${encodeURIComponent(pid)}`, '_blank');
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition cursor-pointer"
                   >
                     <span>Open in new window</span>
                     <ExternalLink className="h-3 w-3" />
-                  </a>
+                  </button>
                 )}
               </div>
 

@@ -706,20 +706,14 @@ class WebContainerRuntimeManager implements RuntimeManager {
     // Global server-ready listener
     instance.on('server-ready', (port: number, url: string) => {
       this.serverPort = port;
-      this.previewUrl = url;
-      this.lastError = null;
-      this.setState('running');
-      this.emitDevOutput(`\r\n\x1b[1;35m✔ Server ready on port ${port}: ${url}\x1b[0m\r\n`);
-      this.notifySnapshot();
+      void this.setVerifiedPreviewUrl(port, url);
     });
 
     // Port event listener
     instance.on('port', (port: number, type: 'open' | 'close', url: string) => {
       if (type === 'open') {
         this.serverPort = port;
-        this.previewUrl = url;
-        this.setState('running');
-        this.notifySnapshot();
+        void this.setVerifiedPreviewUrl(port, url);
       } else if (type === 'close' && this.serverPort === port) {
         this.serverPort = null;
         this.previewUrl = null;
@@ -731,6 +725,53 @@ class WebContainerRuntimeManager implements RuntimeManager {
 
     // Initialize persistent shell process
     void this.initPersistentShell();
+  }
+
+  private previewProbeSeq = 0;
+
+  /**
+   * Canonicalizes and validates the server-ready URL before marking the runtime Ready.
+   * Ensures no 404 or premature connection failure on external open / iframe render.
+   */
+  private async setVerifiedPreviewUrl(port: number, rawUrl: string): Promise<void> {
+    if (!rawUrl) return;
+    const currentSeq = ++this.previewProbeSeq;
+
+    // Ensure canonical format with trailing slash
+    const canonicalUrl = rawUrl.endsWith('/') ? rawUrl : `${rawUrl}/`;
+    this.serverPort = port;
+
+    // Store canonical URL immediately so iframe can mount and begin compilation
+    this.previewUrl = canonicalUrl;
+    this.lastError = null;
+
+    // Transition to 'starting' until URL is verified reachable
+    this.setState('starting');
+    this.emitDevOutput(`\r\n\x1b[36m[WebContainer] Verifying preview endpoint at ${canonicalUrl}…\x1b[0m\r\n`);
+    this.logInternal('PREVIEW', `verifying endpoint: ${canonicalUrl}`);
+    this.notifySnapshot();
+
+    // Probe URL to verify dev server is responding (avoid 404 on immediate click)
+    let verified = false;
+    for (let attempt = 0; attempt < 25; attempt++) {
+      if (currentSeq !== this.previewProbeSeq) return;
+      if (this.state === 'stopped' || this.state === 'error') return;
+
+      try {
+        await fetch(canonicalUrl, { method: 'GET', mode: 'no-cors' });
+        verified = true;
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    if (currentSeq !== this.previewProbeSeq) return;
+
+    this.setState('running');
+    this.emitDevOutput(`\r\n\x1b[1;35m✔ Server ready on port ${port}: ${canonicalUrl}\x1b[0m\r\n`);
+    this.logInternal('PREVIEW', `canonical verified preview ready: ${canonicalUrl}`);
+    this.notifySnapshot();
   }
 
   /**

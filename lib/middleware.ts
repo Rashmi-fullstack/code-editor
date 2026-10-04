@@ -9,7 +9,7 @@ export async function updateSession(request: NextRequest) {
   });
 
   const pathname = request.nextUrl.pathname;
-  if (pathname.startsWith('/editor')) {
+  if (pathname.startsWith('/editor') || pathname.startsWith('/preview')) {
     supabaseResponse.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
     supabaseResponse.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
   }
@@ -30,7 +30,7 @@ export async function updateSession(request: NextRequest) {
         supabaseResponse = NextResponse.next({
           request,
         });
-        if (pathname.startsWith('/editor')) {
+        if (pathname.startsWith('/editor') || pathname.startsWith('/preview')) {
           supabaseResponse.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
           supabaseResponse.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
         }

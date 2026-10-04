@@ -42,6 +42,7 @@ export interface LivePreviewProps {
   isGenerating?: boolean;
   internalBuildState?: string;
   isAutoFixing?: boolean;
+  projectId?: string;
 }
 
 /**
@@ -137,6 +138,7 @@ export default function LivePreview({
   isGenerating = false,
   internalBuildState = 'IDLE',
   isAutoFixing = false,
+  projectId,
 }: LivePreviewProps) {
   const [internalViewport] = useState<ViewportMode>(
     mobile ? 'mobile' : 'desktop'
@@ -166,7 +168,7 @@ export default function LivePreview({
     return unsub;
   }, [onPreviewError]);
 
-  const effectiveUrl = runtimeSnapshot.previewUrl || webcontainerUrl || null;
+  const effectiveUrl = runtimeSnapshot.previewUrl || webcontainerManager.getPreviewUrl() || webcontainerUrl || null;
 
   // Reset iframeLoaded if the effective URL completely changes to a different domain/port
   const currentUrlRef = useRef<string | null>(null);
@@ -218,7 +220,9 @@ export default function LivePreview({
       ? 'Updating preview…'
       : isAutoFixing
         ? 'Making adjustments…'
-        : 'Preparing your preview…';
+        : effectiveUrl
+          ? 'Preview is still starting…'
+          : 'Preparing your preview…';
 
   // Empty Project state
   if (files.length === 0) {
@@ -325,17 +329,28 @@ export default function LivePreview({
             <RotateCcw className="h-3 w-3" />
           </Button>
 
-          {effectiveUrl && (
-            <a
-              href={effectiveUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5"
-              title="Open in new window"
-            >
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
+          {(() => {
+            const isStandalone = typeof window !== 'undefined' && window.location.pathname.startsWith('/preview');
+            if (isStandalone) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    const pid =
+                      projectId ||
+                      new URLSearchParams(window.location.search).get('project') ||
+                      'local-project';
+                    window.open(`/preview?project=${encodeURIComponent(pid)}`, '_blank');
+                  }
+                }}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer"
+                title="Open live preview in new window"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            );
+          })()}
         </div>
       </div>
 

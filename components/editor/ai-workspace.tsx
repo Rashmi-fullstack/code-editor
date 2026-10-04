@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   Sparkles,
   Send,
@@ -13,13 +13,13 @@ import {
   ChevronRight,
   Bot,
   User,
-  PlusCircle,
-  FileEdit,
-  Trash2,
-  ArrowRight,
   Paperclip,
   Square,
   Terminal,
+  Copy,
+  Edit2,
+  RotateCcw,
+  ArrowDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -78,6 +78,9 @@ export interface AIWorkspaceProps {
   activeTab?: 'ai' | 'files';
   onActiveTabChange?: (tab: 'ai' | 'files') => void;
   modelDisplayName?: string;
+  onEditMessage?: (messageId: string, newContent: string) => void;
+  onRegenerateMessage?: (messageId: string) => void;
+  isChatLoading?: boolean;
 }
 
 const BUILD_SUGGESTIONS = [
@@ -110,7 +113,11 @@ export function AIWorkspace({
   conversation,
   generationStage,
   onSelectGeneratedFile,
+  onEditMessage,
+  onRegenerateMessage,
+  isChatLoading = false,
 }: AIWorkspaceProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -118,14 +125,64 @@ export function AIWorkspace({
 
   const [attachedImage, setAttachedImage] = useState<{ name: string; dataUrl: string } | null>(null);
   const [expandedOps, setExpandedOps] = useState<Record<string, boolean>>({});
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState<string>('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState<boolean>(false);
 
-  // Auto-scroll messages to bottom when conversation or stage updates
+  const isAtBottomRef = useRef<boolean>(true);
+  const prevMsgCountRef = useRef<number>(conversation.length);
+
+  // Track scroll position to prevent interrupting user while reading earlier messages
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
+    isAtBottomRef.current = isAtBottom;
+    setShowScrollBottom(!isAtBottom && conversation.length > 2);
+  }, [conversation.length]);
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  // Scroll to bottom on initial mount or when user sends message
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation, generationStage, isWorking]);
+    if (conversation.length > prevMsgCountRef.current || isWorking) {
+      if (isAtBottomRef.current || conversation.length - prevMsgCountRef.current > 0) {
+        scrollToBottom('smooth');
+      }
+    }
+    prevMsgCountRef.current = conversation.length;
+  }, [conversation.length, isWorking]);
 
   const toggleOps = (msgId: string) => {
     setExpandedOps((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
+  };
+
+  const handleCopy = (id: string, text: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    toast.success('Copied to clipboard');
+    setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const handleStartEdit = (msg: AiMessage) => {
+    setEditingMessageId(msg.id);
+    setEditContent(msg.content);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditContent('');
+  };
+
+  const handleConfirmEdit = (msgId: string) => {
+    const trimmed = editContent.trim();
+    if (!trimmed || isWorking) return;
+    setEditingMessageId(null);
+    setEditContent('');
+    onEditMessage?.(msgId, trimmed);
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,8 +235,8 @@ export function AIWorkspace({
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#0a0b16] text-xs text-slate-200 select-none overflow-hidden">
-      {/* Top Header: Professional Codatron AI Identity */}
+    <div className="flex h-full flex-col bg-[#0a0b16] text-xs text-slate-200 select-none overflow-hidden relative">
+      {/* Top Header: Clean Codatron AI Branding (No internal model/provider IDs) */}
       <div className="h-12 px-3.5 border-b border-white/10 bg-[#0d0f20] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white shadow-sm shadow-indigo-500/30">
@@ -189,7 +246,7 @@ export function AIWorkspace({
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-white text-xs tracking-tight">Codatron AI</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-normal">Build and refine your app with AI</p>
+            <p className="text-[10px] text-slate-400 font-normal">AI Application Builder</p>
           </div>
         </div>
 
@@ -224,9 +281,25 @@ export function AIWorkspace({
       </div>
 
       {/* Main Conversation Feed */}
-      <div className="flex-1 min-h-0 p-3.5 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-white/10">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 min-h-0 p-3.5 overflow-y-auto space-y-4 scrollbar-thin scrollbar-thumb-white/10 relative"
+      >
+        {/* Loading Conversation Skeleton (Non-blocking hydration) */}
+        {isChatLoading && conversation.length === 0 && (
+          <div className="space-y-3 py-2 animate-pulse">
+            <div className="flex items-center gap-2 text-slate-400 text-xs font-medium">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+              <span>Loading conversation…</span>
+            </div>
+            <div className="h-16 rounded-xl bg-white/[0.03] border border-white/5" />
+            <div className="h-20 rounded-xl bg-white/[0.03] border border-white/5" />
+          </div>
+        )}
+
         {/* Welcome Empty State (when conversation has 0 messages) */}
-        {conversation.length === 0 && (
+        {!isChatLoading && conversation.length === 0 && (
           <div className="space-y-4 pt-1">
             <div className="rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-950/40 via-[#0d0f24] to-purple-950/20 p-4 space-y-2.5 shadow-xl">
               <div className="flex items-center gap-2 text-indigo-300 font-semibold text-xs">
@@ -271,37 +344,107 @@ export function AIWorkspace({
         {conversation.map((msg) => (
           <div key={msg.id} className="space-y-2.5">
             {msg.role === 'user' ? (
-              /* User Message Bubble */
-              <div className="flex items-start gap-2.5 pl-6 justify-end">
-                <div className="rounded-2xl rounded-tr-sm bg-indigo-600/90 text-white px-3.5 py-2.5 max-w-[90%] text-xs shadow-md space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-[10px] text-indigo-200/80 font-medium">
-                    <User className="h-3 w-3" />
-                    <span>You</span>
-                    <span>•</span>
-                    <span>
-                      {new Date(msg.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
+              /* User Message Bubble with ChatGPT-like Hover Actions & Inline Editing */
+              <div className="group flex items-start gap-2 pl-6 justify-end relative">
+                {/* Actions on hover (Copy & Edit) */}
+                {editingMessageId !== msg.id && (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(msg.id, msg.content)}
+                      className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                      title="Copy prompt"
+                    >
+                      {copiedId === msg.id ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    </button>
+                    {onEditMessage && (
+                      <button
+                        type="button"
+                        onClick={() => handleStartEdit(msg)}
+                        disabled={isWorking}
+                        className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer disabled:opacity-50"
+                        title="Edit prompt"
+                      >
+                        <Edit2 className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
+                )}
 
-                  {msg.attachedImage && (
-                    <div className="rounded-lg overflow-hidden border border-white/20 max-w-[220px] max-h-[140px] bg-black/40">
-                      <img
-                        src={msg.attachedImage}
-                        alt="Reference Attachment"
-                        className="w-full h-full object-cover"
-                      />
+                {/* Inline Editing Mode or Standard Display */}
+                {editingMessageId === msg.id ? (
+                  <div className="rounded-2xl rounded-tr-sm bg-[#15172b] border border-indigo-500/50 p-3 max-w-[95%] w-full shadow-xl space-y-2 text-left">
+                    <div className="flex items-center gap-1.5 text-[10px] text-indigo-300 font-medium">
+                      <Edit2 className="h-3 w-3" />
+                      <span>Edit message</span>
                     </div>
-                  )}
+                    <Textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleConfirmEdit(msg.id);
+                        } else if (e.key === 'Escape') {
+                          handleCancelEdit();
+                        }
+                      }}
+                      className="w-full text-xs font-normal p-2 rounded-lg bg-black/40 border border-white/10 text-white focus-visible:ring-1 focus-visible:ring-indigo-400 min-h-[64px]"
+                      autoFocus
+                      rows={3}
+                    />
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCancelEdit}
+                        className="h-6 px-2.5 text-[11px] text-slate-400 hover:text-white"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!editContent.trim() || isWorking}
+                        onClick={() => handleConfirmEdit(msg.id)}
+                        className="h-6 px-3 text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+                      >
+                        Update
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl rounded-tr-sm bg-indigo-600/90 text-white px-3.5 py-2.5 max-w-[90%] text-xs shadow-md space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[10px] text-indigo-200/80 font-medium">
+                      <User className="h-3 w-3" />
+                      <span>You</span>
+                      <span>•</span>
+                      <span>
+                        {new Date(msg.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
 
-                  <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                </div>
+                    {msg.attachedImage && (
+                      <div className="rounded-lg overflow-hidden border border-white/20 max-w-[220px] max-h-[140px] bg-black/40">
+                        <img
+                          src={msg.attachedImage}
+                          alt="Reference Attachment"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+
+                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                  </div>
+                )}
               </div>
             ) : (
-              /* AI Response Message Bubble */
-              <div className="flex items-start gap-2.5 pr-2">
+              /* AI Response Message Bubble with Natural Conversational Tone, Compact Changes, & Hover Actions */
+              <div className="group flex items-start gap-2.5 pr-2">
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white shadow-md mt-0.5">
                   <Bot className="h-3.5 w-3.5" />
                 </div>
@@ -323,10 +466,10 @@ export function AIWorkspace({
                         {msg.stages && msg.stages.length > 0 && (
                           <div className="space-y-1 pt-1 border-t border-indigo-500/10">
                             {msg.stages.map((stg) => {
-                              const isCurrent = msg.currentStage === stg;
                               const stageIdx = msg.stages!.indexOf(stg);
                               const currentIdx = msg.stages!.indexOf(msg.currentStage || '');
                               const isDone = currentIdx > stageIdx;
+                              const isCurrent = msg.currentStage === stg;
 
                               return (
                                 <div key={stg} className="flex items-center gap-2 text-[10px]">
@@ -351,61 +494,69 @@ export function AIWorkspace({
                       </div>
                     )}
 
-                    {/* Secondary Expandable File Changes Drawer */}
+                    {/* Compact Collapsible File Changes Summary (Part 12) */}
                     {msg.status === 'success' && msg.operations && msg.operations.length > 0 && (
-                      <div className="pt-0.5">
+                      <div className="pt-1">
                         <button
                           type="button"
                           onClick={() => toggleOps(msg.id)}
-                          className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-indigo-300 transition cursor-pointer bg-white/[0.04] hover:bg-white/[0.08] px-2.5 py-1 rounded-lg border border-white/5"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-400 hover:text-slate-200 transition cursor-pointer bg-white/[0.03] hover:bg-white/[0.07] px-2.5 py-1 rounded-lg border border-white/5"
                         >
                           <FileCode className="h-3 w-3 text-indigo-400" />
                           <span>
-                            {expandedOps[msg.id] ? 'Hide changes' : 'View changes'} ({msg.operations.length} {msg.operations.length === 1 ? 'file' : 'files'})
+                            {msg.operations.length} {msg.operations.length === 1 ? 'file changed' : 'files changed'}
                           </span>
                           <ChevronRight
-                            className={`h-3 w-3 transition-transform ${
-                              expandedOps[msg.id] ? 'rotate-90 text-indigo-400' : 'text-slate-500'
+                            className={`h-3 w-3 transition-transform text-slate-500 ${
+                              expandedOps[msg.id] ? 'rotate-90 text-indigo-400' : ''
                             }`}
                           />
                         </button>
 
                         {expandedOps[msg.id] && (
-                          <div className="mt-2 rounded-xl border border-white/5 bg-black/40 p-2 space-y-1 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
+                          <div className="mt-2 rounded-xl border border-white/10 bg-black/50 p-2 space-y-1 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
                             {msg.operations.map((op) => {
                               const isCreate = op.type === 'create';
                               const isUpdate = op.type === 'update';
                               const isDelete = op.type === 'delete';
-                              const isRename = op.type === 'rename';
 
                               return (
                                 <button
                                   key={op.path}
                                   type="button"
                                   onClick={() => handleFileClick(op.path)}
-                                  className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded text-[11px] font-mono text-slate-300 hover:bg-white/10 hover:text-white transition group text-left cursor-pointer"
+                                  className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[11px] font-mono text-slate-300 hover:bg-white/10 hover:text-white transition group text-left cursor-pointer"
                                   title={`Open ${op.path} in code editor`}
                                 >
-                                  <span className="flex items-center gap-2 truncate">
-                                    {isCreate && <PlusCircle className="h-3 w-3 text-emerald-400 shrink-0" />}
-                                    {isUpdate && <FileEdit className="h-3 w-3 text-blue-400 shrink-0" />}
-                                    {isDelete && <Trash2 className="h-3 w-3 text-red-400 shrink-0" />}
-                                    {isRename && <ArrowRight className="h-3 w-3 text-purple-400 shrink-0" />}
+                                  <span className="flex items-center gap-1.5 truncate">
+                                    <span
+                                      className={`font-bold text-xs ${
+                                        isCreate
+                                          ? 'text-emerald-400'
+                                          : isUpdate
+                                          ? 'text-blue-400'
+                                          : isDelete
+                                          ? 'text-rose-400'
+                                          : 'text-purple-400'
+                                      }`}
+                                    >
+                                      {isCreate ? '+' : isUpdate ? '~' : isDelete ? '-' : '→'}
+                                    </span>
                                     <span className="truncate">{op.path}</span>
                                   </span>
 
                                   <span
-                                    className={`text-[8px] uppercase font-sans font-semibold px-1 py-0.2 rounded shrink-0 ${
+                                    className={`text-[9px] uppercase font-sans font-semibold px-1.5 py-0.5 rounded tracking-wider shrink-0 ${
                                       isCreate
                                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                                         : isUpdate
                                         ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                                         : isDelete
-                                        ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                        ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                                         : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                                     }`}
                                   >
-                                    {op.type}
+                                    {isCreate ? 'CREATE' : isUpdate ? 'UPDATE' : isDelete ? 'DELETE' : 'RENAME'}
                                   </span>
                                 </button>
                               );
@@ -419,7 +570,7 @@ export function AIWorkspace({
                     {msg.status === 'error' && (
                       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
                         <p className="text-slate-300 text-[11px] leading-relaxed">
-                          I couldn't finish this change automatically. You can ask me to try again or open Diagnostics for details.
+                          I couldn&apos;t finish this change automatically. You can ask me to try again or open Diagnostics for details.
                         </p>
                         <div className="flex items-center gap-2 pt-1">
                           <Button
@@ -444,6 +595,38 @@ export function AIWorkspace({
                         </div>
                       </div>
                     )}
+
+                    {/* Conversational Action Bar on hover: Copy & Regenerate */}
+                    {msg.status !== 'pending' && (
+                      <div className="flex items-center justify-between pt-1 border-t border-white/5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(msg.id, msg.content)}
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+                            title="Copy response"
+                          >
+                            {copiedId === msg.id ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                            <span>{copiedId === msg.id ? 'Copied' : 'Copy'}</span>
+                          </button>
+                          {onRegenerateMessage && (
+                            <button
+                              type="button"
+                              onClick={() => onRegenerateMessage(msg.id)}
+                              disabled={isWorking}
+                              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                              title="Regenerate response"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              <span>Regenerate</span>
+                            </button>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -453,6 +636,18 @@ export function AIWorkspace({
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Floating Scroll to Bottom Button */}
+      {showScrollBottom && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom('smooth')}
+          className="absolute bottom-28 right-5 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600/90 text-white shadow-lg hover:bg-indigo-500 transition cursor-pointer"
+          title="Scroll to latest message"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       {/* Bottom Prompt Composer */}
       <div className="p-3 border-t border-white/10 bg-[#0d0f20]/95 backdrop-blur-md space-y-2 shrink-0">
@@ -473,7 +668,7 @@ export function AIWorkspace({
                   <button
                     type="button"
                     onClick={onClearSelectedCode}
-                    className="hover:text-white ml-0.5"
+                    className="hover:text-white ml-0.5 cursor-pointer"
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>

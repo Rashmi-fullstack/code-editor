@@ -49,6 +49,9 @@ export async function getProjectGenerations(
   supabase: SupabaseClient<Database>,
   projectId: string
 ): Promise<{ data: GenerationHistory[] | null; error: Error | null }> {
+  if (!projectId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+    return { data: null, error: null };
+  }
   try {
     const { data, error } = await supabase
       .from('generation_history')

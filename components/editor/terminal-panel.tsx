@@ -2,14 +2,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Terminal as TerminalIcon,
+  Server,
   RotateCcw,
   Trash2,
-  AlertCircle,
-  Square,
   X,
-  Server,
-  TerminalSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -37,16 +33,11 @@ export function TerminalPanel({
   onClose,
   className = '',
 }: TerminalPanelProps) {
-  const [activeTab, setActiveTab] = useState<'shell' | 'server'>('shell');
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<WebContainerRuntimeSnapshot>(
     webcontainerManager.getSnapshot()
   );
 
-  const shellTerminalRef = useRef<HTMLDivElement>(null);
   const serverTerminalRef = useRef<HTMLDivElement>(null);
-
-  const shellXterm = useRef<Terminal | null>(null);
-  const shellFitAddon = useRef<FitAddon | null>(null);
   const serverXterm = useRef<Terminal | null>(null);
   const serverFitAddon = useRef<FitAddon | null>(null);
 
@@ -63,101 +54,6 @@ export function TerminalPanel({
     });
     return unsub;
   }, [onServerReady, onErrorDetected]);
-
-  // Initialize Shell XTerm instance
-  useEffect(() => {
-    let term: Terminal | null = null;
-    let fitAddon: FitAddon | null = null;
-    let disposed = false;
-
-    async function initShell() {
-      try {
-        if (!shellTerminalRef.current || disposed) return;
-
-        const [{ Terminal }, { FitAddon }] = await Promise.all([
-          import('@xterm/xterm'),
-          import('@xterm/addon-fit'),
-        ]);
-
-        if (disposed || !shellTerminalRef.current) return;
-
-        const targetEl = shellTerminalRef.current;
-        targetEl.innerHTML = '';
-
-        term = new Terminal({
-          convertEol: true,
-          cursorBlink: true,
-          fontSize: 12,
-          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-          theme: {
-            background: '#0a0b16',
-            foreground: '#e2e8f0',
-            cursor: '#818cf8',
-            selectionBackground: '#4338ca',
-            black: '#0f172a',
-            red: '#f87171',
-            green: '#4ade80',
-            yellow: '#facc15',
-            blue: '#60a5fa',
-            magenta: '#c084fc',
-            cyan: '#38bdf8',
-            white: '#f8fafc',
-          },
-        });
-
-        fitAddon = new FitAddon();
-        term.loadAddon(fitAddon);
-
-        if (disposed || !shellTerminalRef.current) {
-          term.dispose();
-          return;
-        }
-
-        term.open(targetEl);
-        try {
-          fitAddon.fit();
-        } catch {}
-
-        shellXterm.current = term;
-        shellFitAddon.current = fitAddon;
-
-        term.writeln('\x1b[1;34m=== Codatron.ai Interactive Shell ===\x1b[0m');
-        term.writeln('\x1b[90mConnected to WebContainer persistent kernel.\x1b[0m');
-
-        // Forward user keystrokes directly to WebContainer persistent shell
-        term.onData((data: string) => {
-          webcontainerManager.writeShell(data);
-        });
-
-        // Subscribe to shell output
-        const unsubShell = webcontainerManager.subscribeShellOutput((chunk) => {
-          if (!disposed && term) {
-            term.write(chunk);
-          }
-        });
-
-        // The lifecycle is owned by the editor runtime; avoid a second boot here,
-        // because WebContainer only allows a single boot per browser session.
-        return () => {
-          unsubShell();
-        };
-      } catch (err) {
-        console.warn('[TerminalPanel] Failed to initialize shell terminal:', err);
-      }
-    }
-
-    const cleanupPromise = initShell();
-
-    return () => {
-      disposed = true;
-      void cleanupPromise.then((cleanup) => cleanup?.());
-      try {
-        term?.dispose();
-      } catch {}
-      shellXterm.current = null;
-      shellFitAddon.current = null;
-    };
-  }, []);
 
   // Initialize Server Logs XTerm instance
   useEffect(() => {
@@ -218,7 +114,15 @@ export function TerminalPanel({
 
         term.writeln('\x1b[1;36m=== Codatron.ai Dev Server & Build Output ===\x1b[0m');
 
-        // Subscribe to dev output
+        // Preload recent logs from WebContainer
+        const existingLogs = webcontainerManager.getLogs();
+        if (existingLogs.length > 0) {
+          for (const line of existingLogs.slice(-100)) {
+            term.writeln(line);
+          }
+        }
+
+        // Subscribe to live dev output
         const unsubDev = webcontainerManager.subscribeDevOutput((chunk) => {
           if (!disposed && term) {
             term.write(chunk);
@@ -246,18 +150,11 @@ export function TerminalPanel({
     };
   }, []);
 
-  // Refit when tab changes or window resizes
+  // Handle window and panel resizing
   useEffect(() => {
     const handleResize = () => {
       try {
-        if (activeTab === 'shell') {
-          shellFitAddon.current?.fit();
-          const cols = shellXterm.current?.cols || 80;
-          const rows = shellXterm.current?.rows || 24;
-          webcontainerManager.resizeShell(cols, rows);
-        } else {
-          serverFitAddon.current?.fit();
-        }
+        serverFitAddon.current?.fit();
       } catch {}
     };
 
@@ -268,22 +165,14 @@ export function TerminalPanel({
       window.removeEventListener('resize', handleResize);
       clearTimeout(timer);
     };
-  }, [activeTab]);
+  }, []);
 
   const handleClear = () => {
-    if (activeTab === 'shell') {
-      shellXterm.current?.clear();
-    } else {
-      serverXterm.current?.clear();
-    }
+    serverXterm.current?.clear();
   };
 
   const handleRestart = () => {
-    void webcontainerManager.runProject(files, 'active-project', false);
-  };
-
-  const handleInterrupt = () => {
-    webcontainerManager.sendInterrupt();
+    void webcontainerManager.restartDevServer(files);
   };
 
   // Compute status badge styling
@@ -297,43 +186,16 @@ export function TerminalPanel({
     running: { label: 'Ready', color: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' },
     error: { label: 'Error', color: 'border-red-500/30 bg-red-500/10 text-red-300' },
     stopped: { label: 'Stopped', color: 'border-slate-600/30 bg-slate-600/10 text-slate-400' },
-  }[runtimeSnapshot.state];
+  }[runtimeSnapshot.state] || { label: 'Idle', color: 'border-slate-500/30 bg-slate-500/10 text-slate-400' };
 
   return (
     <div className={`flex flex-col h-full bg-[#0a0b16] min-w-0 min-h-0 overflow-hidden ${className}`}>
-      {/* Terminal Title Bar */}
+      {/* Title Bar */}
       <div className="h-9 px-3 border-b border-white/10 bg-[#0d0f20] flex items-center justify-between shrink-0 select-none">
-        {/* Left: Tab selectors & Status badge */}
+        {/* Left: Dev Server label & Status badge */}
         <div className="flex items-center gap-2 min-w-0">
-          <TerminalIcon className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-          
-          {/* Tabs: Shell vs Server Output */}
-          <div className="flex items-center bg-white/5 rounded-md p-0.5 border border-white/5">
-            <button
-              type="button"
-              onClick={() => setActiveTab('shell')}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                activeTab === 'shell'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <TerminalSquare className="h-3 w-3" />
-              <span>Shell</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('server')}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                activeTab === 'server'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Server className="h-3 w-3" />
-              <span>Dev Server</span>
-            </button>
-          </div>
+          <Server className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+          <span className="text-xs font-semibold text-white">Dev Server & Build Logs</span>
 
           <Badge variant="outline" className={`text-[9px] uppercase px-1.5 py-0 ${statusConfig.color}`}>
             {statusConfig.label}
@@ -348,35 +210,15 @@ export function TerminalPanel({
 
         {/* Right: Action Buttons */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {!runtimeSnapshot.isIsolated && (
-            <button
-              type="button"
-              onClick={async () => {
-                if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-                  const regs = await navigator.serviceWorker.getRegistrations();
-                  for (const reg of regs) {
-                    await reg.unregister();
-                  }
-                }
-                window.location.reload();
-              }}
-              className="flex items-center gap-1 text-[10px] text-amber-300 hover:text-white bg-amber-500/20 hover:bg-amber-500/30 px-2 py-0.5 rounded border border-amber-500/30 transition-colors"
-              title="Reload to activate Cross-Origin Isolation headers"
-            >
-              <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Reload to Activate Isolation</span>
-            </button>
-          )}
-
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleInterrupt}
-            className="h-6 px-2 text-[11px] text-slate-400 hover:text-amber-300 hover:bg-white/5 gap-1"
-            title="Send Ctrl+C (Interrupt)"
+            onClick={handleClear}
+            className="h-6 px-2 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1"
+            title="Clear logs"
           >
-            <Square className="h-2.5 w-2.5 fill-current" />
-            <span className="hidden sm:inline">Ctrl+C</span>
+            <Trash2 className="h-3 w-3" />
+            <span className="hidden sm:inline">Clear</span>
           </Button>
 
           <Button
@@ -384,21 +226,10 @@ export function TerminalPanel({
             size="sm"
             onClick={handleRestart}
             className="h-6 px-2 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1"
-            title="Restart Dev Server"
+            title="Restart development server"
           >
             <RotateCcw className="h-3 w-3" />
             <span className="hidden sm:inline">Restart</span>
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleClear}
-            className="h-6 px-2 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1"
-            title="Clear Output"
-          >
-            <Trash2 className="h-3 w-3" />
-            <span className="hidden sm:inline">Clear</span>
           </Button>
 
           {onClose && (
@@ -406,8 +237,8 @@ export function TerminalPanel({
               variant="ghost"
               size="sm"
               onClick={onClose}
-              className="h-6 w-6 p-0 text-slate-400 hover:text-white hover:bg-white/10"
-              title="Close Terminal"
+              className="h-6 w-6 p-0 text-slate-400 hover:text-white hover:bg-white/5"
+              title="Close panel"
             >
               <X className="h-3.5 w-3.5" />
             </Button>
@@ -415,16 +246,9 @@ export function TerminalPanel({
         </div>
       </div>
 
-      {/* Terminal Displays (Keep both mounted to preserve buffer state) */}
-      <div className="flex-1 min-h-0 min-w-0 p-2 overflow-hidden relative">
-        <div
-          ref={shellTerminalRef}
-          className={`h-full w-full ${activeTab === 'shell' ? 'block' : 'hidden'}`}
-        />
-        <div
-          ref={serverTerminalRef}
-          className={`h-full w-full ${activeTab === 'server' ? 'block' : 'hidden'}`}
-        />
+      {/* Server Logs Output */}
+      <div className="flex-1 min-h-0 min-w-0 relative bg-[#0a0b16] p-1 overflow-hidden">
+        <div ref={serverTerminalRef} className="h-full w-full overflow-hidden" />
       </div>
     </div>
   );

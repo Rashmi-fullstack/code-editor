@@ -5,7 +5,6 @@ import {
   Sparkles,
   Send,
   Loader2,
-  CheckCircle2,
   FileCode,
   X,
   Code2,
@@ -82,14 +81,14 @@ export interface AIWorkspaceProps {
 }
 
 const BUILD_SUGGESTIONS = [
-  'Build a Netflix-style streaming homepage with dark theme, cinematic hero banner, movie rows, and search',
+  'Build a Netflix-style streaming homepage with dark theme, cinematic hero, movie rows, and search',
   'Build a modern developer portfolio with project showcases, skills matrix, and contact form',
   'Create a SaaS analytics dashboard with chart widgets, KPI metrics, and dark mode',
   'Build an e-commerce storefront with cart drawer, product grid, and category filters',
 ];
 
 const CODE_SUGGESTIONS = [
-  'Make the hero section taller and enrich the movie sections with posters',
+  'Make the hero section taller and add more movie posters',
   'Add live search filtering with real-time query highlight',
   'Refactor into clean reusable functional components with TypeScript types',
   'Add a sleek mobile navigation drawer and responsive layout',
@@ -118,11 +117,16 @@ export function AIWorkspace({
   const { creditsRemaining } = useCredits();
 
   const [attachedImage, setAttachedImage] = useState<{ name: string; dataUrl: string } | null>(null);
+  const [expandedOps, setExpandedOps] = useState<Record<string, boolean>>({});
 
   // Auto-scroll messages to bottom when conversation or stage updates
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversation, generationStage, isWorking]);
+
+  const toggleOps = (msgId: string) => {
+    setExpandedOps((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
+  };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -233,7 +237,7 @@ export function AIWorkspace({
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 Describe what you want to build. Codatron builds the full experience, creates responsive layouts,
-                adds real visual assets, and prepares your preview automatically.
+                adds real visual assets, and prepares your live preview automatically.
               </p>
             </div>
 
@@ -302,22 +306,22 @@ export function AIWorkspace({
                   <Bot className="h-3.5 w-3.5" />
                 </div>
 
-                <div className="flex-1 space-y-2.5 min-w-0">
-                  <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-[#0e1022] p-3.5 text-xs space-y-3 shadow-md">
-                    {/* Summary text */}
-                    <p className="text-slate-200 leading-relaxed font-medium">
+                <div className="flex-1 space-y-2 min-w-0">
+                  <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-[#0e1022] p-3.5 text-xs space-y-2.5 shadow-md">
+                    {/* Natural Conversational Response Text */}
+                    <div className="text-slate-200 leading-relaxed font-normal whitespace-pre-wrap">
                       {msg.content}
-                    </p>
+                    </div>
 
-                    {/* Progress Stages Stepper */}
+                    {/* Temporary Progress Stages Stepper (ONLY visible during active execution) */}
                     {msg.status === 'pending' && (
-                      <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/30 p-3 space-y-2.5">
+                      <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/30 p-2.5 space-y-2">
                         <div className="flex items-center gap-2 text-indigo-300 font-medium text-[11px]">
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
                           <span>{msg.currentStage || generationStage || 'Building your application…'}</span>
                         </div>
                         {msg.stages && msg.stages.length > 0 && (
-                          <div className="space-y-1.5 pt-1.5 border-t border-indigo-500/10">
+                          <div className="space-y-1 pt-1 border-t border-indigo-500/10">
                             {msg.stages.map((stg) => {
                               const isCurrent = msg.currentStage === stg;
                               const stageIdx = msg.stages!.indexOf(stg);
@@ -347,100 +351,73 @@ export function AIWorkspace({
                       </div>
                     )}
 
-                    {/* Clean Product Completion Card */}
-                    {msg.status === 'success' && (
-                      <div className="rounded-xl border border-white/5 bg-black/30 p-2.5 space-y-1.5">
-                        <div className="flex items-center gap-1.5 text-emerald-400 text-[10px] font-semibold">
-                          <CheckCircle2 className="h-3 w-3" />
-                          <span>Your app is ready</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[10px] text-slate-400 pl-4 border-l border-white/5">
-                          <span className="flex items-center gap-1 text-slate-300">
-                            <Check className="h-2.5 w-2.5 text-emerald-400" />
-                            <span>Ready to explore</span>
+                    {/* Secondary Expandable File Changes Drawer */}
+                    {msg.status === 'success' && msg.operations && msg.operations.length > 0 && (
+                      <div className="pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleOps(msg.id)}
+                          className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-indigo-300 transition cursor-pointer bg-white/[0.04] hover:bg-white/[0.08] px-2.5 py-1 rounded-lg border border-white/5"
+                        >
+                          <FileCode className="h-3 w-3 text-indigo-400" />
+                          <span>
+                            {expandedOps[msg.id] ? 'Hide changes' : 'View changes'} ({msg.operations.length} {msg.operations.length === 1 ? 'file' : 'files'})
                           </span>
-                          <span className="flex items-center gap-1 text-slate-300">
-                            <Check className="h-2.5 w-2.5 text-emerald-400" />
-                            <span>Changes applied</span>
-                          </span>
-                          <span className="flex items-center gap-1 text-slate-300">
-                            <Check className="h-2.5 w-2.5 text-emerald-400" />
-                            <span>Preview updated</span>
-                          </span>
-                        </div>
-                      </div>
-                    )}
+                          <ChevronRight
+                            className={`h-3 w-3 transition-transform ${
+                              expandedOps[msg.id] ? 'rotate-90 text-indigo-400' : 'text-slate-500'
+                            }`}
+                          />
+                        </button>
 
-                    {/* File Modification Summary (View in Code) */}
-                    {msg.operations && msg.operations.length > 0 && (
-                      <div className="rounded-xl border border-white/5 bg-black/40 p-3 space-y-2.5">
-                        <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium border-b border-white/5 pb-2">
-                          <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            <span>
-                              {msg.operations.length} {msg.operations.length === 1 ? 'file' : 'files'} modified
-                            </span>
-                          </span>
-                          <span className="text-[10px] text-slate-500">Click to view in code</span>
-                        </div>
+                        {expandedOps[msg.id] && (
+                          <div className="mt-2 rounded-xl border border-white/5 bg-black/40 p-2 space-y-1 max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
+                            {msg.operations.map((op) => {
+                              const isCreate = op.type === 'create';
+                              const isUpdate = op.type === 'update';
+                              const isDelete = op.type === 'delete';
+                              const isRename = op.type === 'rename';
 
-                        {/* List of generated file operations */}
-                        <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
-                          {msg.operations.map((op) => {
-                            const isCreate = op.type === 'create';
-                            const isUpdate = op.type === 'update';
-                            const isDelete = op.type === 'delete';
-                            const isRename = op.type === 'rename';
-
-                            return (
-                              <button
-                                key={op.path}
-                                type="button"
-                                onClick={() => handleFileClick(op.path)}
-                                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-mono text-slate-300 hover:bg-white/10 hover:text-white transition group text-left cursor-pointer border border-transparent hover:border-white/10"
-                                title={`Open ${op.path} in code editor`}
-                              >
-                                <span className="flex items-center gap-2 truncate">
-                                  {isCreate && <PlusCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
-                                  {isUpdate && <FileEdit className="h-3.5 w-3.5 text-blue-400 shrink-0" />}
-                                  {isDelete && <Trash2 className="h-3.5 w-3.5 text-red-400 shrink-0" />}
-                                  {isRename && <ArrowRight className="h-3.5 w-3.5 text-purple-400 shrink-0" />}
-
-                                  <span className="truncate">{op.path}</span>
-                                </span>
-
-                                <span
-                                  className={`text-[9px] uppercase font-sans font-semibold px-1.5 py-0.5 rounded shrink-0 ${
-                                    isCreate
-                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                      : isUpdate
-                                      ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                                      : isDelete
-                                      ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                      : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                  }`}
+                              return (
+                                <button
+                                  key={op.path}
+                                  type="button"
+                                  onClick={() => handleFileClick(op.path)}
+                                  className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded text-[11px] font-mono text-slate-300 hover:bg-white/10 hover:text-white transition group text-left cursor-pointer"
+                                  title={`Open ${op.path} in code editor`}
                                 >
-                                  {op.type}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                                  <span className="flex items-center gap-2 truncate">
+                                    {isCreate && <PlusCircle className="h-3 w-3 text-emerald-400 shrink-0" />}
+                                    {isUpdate && <FileEdit className="h-3 w-3 text-blue-400 shrink-0" />}
+                                    {isDelete && <Trash2 className="h-3 w-3 text-red-400 shrink-0" />}
+                                    {isRename && <ArrowRight className="h-3 w-3 text-purple-400 shrink-0" />}
+                                    <span className="truncate">{op.path}</span>
+                                  </span>
 
-                        {/* Live Preview Ready Indicator */}
-                        <div className="pt-1 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400">
-                          <span className="flex items-center gap-1 text-emerald-400">
-                            <Check className="h-3 w-3" />
-                            <span>Live preview updated</span>
-                          </span>
-                          <span className="text-slate-400 font-medium">Ready</span>
-                        </div>
+                                  <span
+                                    className={`text-[8px] uppercase font-sans font-semibold px-1 py-0.2 rounded shrink-0 ${
+                                      isCreate
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                        : isUpdate
+                                        ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                        : isDelete
+                                        ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                        : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                                    }`}
+                                  >
+                                    {op.type}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
 
                     {/* Polite Recovery Card on Exceeded Retries */}
                     {msg.status === 'error' && (
-                      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2.5">
+                      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 space-y-2">
                         <p className="text-slate-300 text-[11px] leading-relaxed">
                           I couldn't finish this change automatically. You can ask me to try again or open Diagnostics for details.
                         </p>
@@ -465,14 +442,6 @@ export function AIWorkspace({
                             </Button>
                           )}
                         </div>
-                      </div>
-                    )}
-
-                    {/* Silent Auto-Fix Success Badge */}
-                    {msg.isFixed && (
-                      <div className="flex items-center gap-1.5 text-emerald-400 text-[11px] font-medium bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-lg">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Everything is ready — preview updated</span>
                       </div>
                     )}
                   </div>
@@ -558,9 +527,9 @@ export function AIWorkspace({
             onKeyDown={handleKeyDown}
             disabled={isWorking}
             placeholder={
-              files.length === 0
-                ? 'Describe what you want to build…'
-                : 'Ask Codatron to build or change anything…'
+              isWorking
+                ? 'Building your application…'
+                : 'Describe what you want to build or change…'
             }
             rows={2}
             className="w-full resize-none border-0 bg-transparent p-1 text-xs leading-relaxed text-slate-200 placeholder:text-slate-500 focus-visible:ring-0 min-h-[48px] max-h-[140px]"
@@ -607,12 +576,12 @@ export function AIWorkspace({
                 {isWorking ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    <span>Working…</span>
+                    <span>Building…</span>
                   </>
                 ) : (
                   <>
                     <Send className="h-3 w-3" />
-                    <span>{files.length === 0 ? 'Build' : 'Send'}</span>
+                    <span>Send</span>
                   </>
                 )}
               </Button>

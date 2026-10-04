@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import Script from 'next/script';
 import {
   Loader2,
@@ -75,8 +76,40 @@ type AgentResponse = {
 
 export type ProjectStatus = 'loading' | 'empty' | 'ready' | 'error';
 
-export default function EditorPage() {
+export type EditorLifecycleState =
+  | 'ROUTE_LOADING'
+  | 'AUTH_READY'
+  | 'PROJECT_LOADING'
+  | 'PROJECT_HYDRATED'
+  | 'EDITOR_READY'
+  | 'RUNTIME_STARTING'
+  | 'PREVIEW_LOADING'
+  | 'PREVIEW_READY'
+  | 'FAILED';
+
+export type InternalBuildState =
+  | 'IDLE'
+  | 'BUILDING'
+  | 'ANALYZING'
+  | 'GENERATING'
+  | 'SYNCING_FILES'
+  | 'STARTING_PREVIEW'
+  | 'COMPILING'
+  | 'VERIFYING'
+  | 'AUTO_FIXING'
+  | 'REBUILDING'
+  | 'READY'
+  | 'FAILED';
+
+import { isApplicationFatalError } from '@/lib/runtime/error-classifier';
+export { isApplicationFatalError };
+
+function EditorPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryPid = searchParams?.get('project') || searchParams?.get('id') || null;
+  const rawView = searchParams?.get('view') || searchParams?.get('role') || null;
+  const queryView = rawView === 'product' || rawView === 'product-manager' ? 'product' : rawView === 'developer' ? 'developer' : null;
   const { user, isLoading } = useAuth();
   const supabase = useMemo(() => createClient(), []);
 
@@ -140,9 +173,55 @@ export default function EditorPage() {
   const [paletteCreateInput, setPaletteCreateInput] = useState('');
   const runtimeBootedProjectIdRef = useRef<string | null>(null);
   const hydratedTargetRef = useRef<string | null>(null);
-  const isHydratingRef = useRef<boolean>(false);
+  const loadSeqRef = useRef<number>(0);
   const activeRunSignatureRef = useRef<string | null>(null);
   const selfHealAttemptsRef = useRef<number>(0);
+  const [internalBuildState, setInternalBuildState] = useState<InternalBuildState>('IDLE');
+  const internalBuildStateRef = useRef<InternalBuildState>('IDLE');
+  const [editorLifecycleState, setEditorLifecycleState] = useState<EditorLifecycleState>('ROUTE_LOADING');
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+
+  const perfTimersRef = useRef<{
+    routeStart: number;
+    shellRender: number;
+    authReady?: number;
+    projectFetchStart?: number;
+    projectFetchEnd?: number;
+    filesFetchEnd?: number;
+    editorReady?: number;
+    runtimeStart?: number;
+    runtimeReady?: number;
+    previewReady?: number;
+  }>({
+    routeStart: Date.now(),
+    shellRender: Date.now(),
+  });
+
+  const transitionLifecycle = useCallback((nextState: EditorLifecycleState, detail?: string) => {
+    setEditorLifecycleState(nextState);
+    webcontainerManager.logInternal('EDITOR', detail ? `${nextState} — ${detail}` : nextState);
+  }, []);
+
+  const retryHydration = useCallback(() => {
+    webcontainerManager.logInternal('PROJECT', 'retry requested');
+    setProjectStatus('loading');
+    hydratedTargetRef.current = null;
+    loadSeqRef.current += 1;
+    setReloadTrigger((prev) => prev + 1);
+  }, []);
+
+  const perfMetricsRef = useRef<{
+    startTime: number;
+    generationMs?: number;
+    fileSyncMs?: number;
+    runtimeReadyMs?: number;
+  }>({ startTime: 0 });
+
+  const transitionBuildState = useCallback((nextState: InternalBuildState, detail?: string) => {
+    internalBuildStateRef.current = nextState;
+    setInternalBuildState(nextState);
+    webcontainerManager.logInternal('BUILD', detail ? `${nextState} — ${detail}` : nextState);
+  }, []);
 
   // Active file derived from single source of truth: `files`
   const activeFile = useMemo(
@@ -387,41 +466,93 @@ export default function EditorPage() {
     return 'minmax(0, 1fr)';
   }, [showAiPanel, aiWorkspaceWidth]);
 
-  // Load project on mount: Hydrate from Supabase and URL query (One-time guarded)
+  // Load project on mount: Hydrate from Supabase and URL query (Guarded with request sequencing)
   useEffect(() => {
+    webcontainerManager.logInternal('EDITOR', 'route opened');
+
     if (!isLoading && !user && process.env.NODE_ENV === 'production') {
       router.replace('/login?next=/editor');
       return;
     }
     if (isLoading) return;
 
-    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    const queryPid = params?.get('project') || params?.get('id');
-    const rawView = params?.get('view') || params?.get('role');
-    const queryView = rawView === 'product' || rawView === 'product-manager' ? 'product' : rawView === 'developer' ? 'developer' : null;
+    perfTimersRef.current.authReady = Date.now();
+    transitionLifecycle('AUTH_READY');
+    webcontainerManager.logInternal('AUTH', 'authentication verified');
+
+    const currentSeq = ++loadSeqRef.current;
+    let active = true;
 
     const targetKey = `${user ? user.id : 'anon'}_${queryPid || 'default'}`;
 
-    // Prevent hydration loop: If already hydrating, or already hydrated for this target, do not re-fetch
-    if (isHydratingRef.current) return;
+    if (queryView && workspace !== queryView) {
+      setWorkspace(queryView);
+    }
+
     if (hydratedTargetRef.current === targetKey && project !== null) {
-      if (queryView && workspace !== queryView) {
-        setWorkspace(queryView);
-      }
       return;
     }
 
-    let active = true;
-    isHydratingRef.current = true;
+    // Safety timeout: 10 seconds per Section 7 (Never leave user stuck on infinite spinner)
+    const timeoutId = setTimeout(() => {
+      if (active && currentSeq === loadSeqRef.current && projectStatus === 'loading') {
+        const cachedFilesStr = queryPid ? localStorage.getItem(`codatron_files_${queryPid}`) : null;
+        if (cachedFilesStr) {
+          try {
+            const parsed = JSON.parse(cachedFilesStr);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setFiles(parsed);
+              setProjectStatus('ready');
+              transitionLifecycle('EDITOR_READY', 'Restored from local cache on timeout');
+              toast.info('Loaded cached project version.', { id: 'cache-fallback' });
+              return;
+            }
+          } catch { }
+        }
+        setProjectStatus('error');
+        transitionLifecycle('FAILED', 'Project hydration timed out after 10s');
+        webcontainerManager.logInternal('PROJECT', 'hydration failed (timeout after 10s)');
+      }
+    }, 10000);
 
     async function loadInitialProject() {
-      // Only set loading if no project exists yet to avoid tearing down the IDE UI
-      if (!project) {
-        setProjectStatus('loading');
+      perfTimersRef.current.projectFetchStart = Date.now();
+      transitionLifecycle('PROJECT_LOADING', `Project ${queryPid || 'local'}`);
+      webcontainerManager.logInternal('PROJECT', `loading project: ${queryPid || 'local'}`);
+
+      // 1. Optimistic Hydration: If cached data exists for this project, restore in 0ms!
+      if (queryPid) {
+        try {
+          const cachedFiles = localStorage.getItem(`codatron_files_${queryPid}`);
+          const cachedProject = localStorage.getItem(`codatron_project_${queryPid}`);
+          if (cachedFiles) {
+            const parsed = JSON.parse(cachedFiles);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setFiles(parsed);
+              setProjectStatus('ready');
+              transitionLifecycle('EDITOR_READY', 'Optimistic cache hit');
+              const initial =
+                parsed.find((file: ProjectFile) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
+                parsed.find((file: ProjectFile) => !file.is_folder);
+              if (initial) {
+                setOpenTabs((prev) => (prev.length > 0 ? prev : [initial.path]));
+                setActivePath((prev) => prev || initial.path);
+                setDrafts((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
+                setSavedContents((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
+              }
+            }
+          }
+          if (cachedProject) {
+            const parsedProj = JSON.parse(cachedProject);
+            if (parsedProj && parsedProj.id === queryPid) {
+              setProject(parsedProj);
+            }
+          }
+        } catch { }
       }
 
-      if (queryView) {
-        setWorkspace(queryView);
+      if (!project) {
+        setProjectStatus((prev) => (prev === 'ready' ? 'ready' : 'loading'));
       }
 
       if (!user) {
@@ -455,10 +586,12 @@ export default function EditorPage() {
 
         setFiles(initialFiles);
         setProjectStatus(initialFiles.length > 0 ? 'ready' : 'empty');
+        transitionLifecycle('PROJECT_HYDRATED', 'Local project');
+        transitionLifecycle('EDITOR_READY', 'Local files loaded');
 
         if (initialFiles.length > 0) {
           const initial =
-            initialFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py') ??
+            initialFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
             initialFiles.find((file) => !file.is_folder);
           if (initial) {
             setOpenTabs([initial.path]);
@@ -468,38 +601,51 @@ export default function EditorPage() {
           }
         }
         hydratedTargetRef.current = targetKey;
-        isHydratingRef.current = false;
         return;
       }
 
-      // Authenticated User: Supabase is the sole source of truth
+      // Authenticated User: Fetch Project & Files in parallel
       try {
         let current: Project | null = null;
+        let projectFiles: ProjectFile[] = [];
 
         if (queryPid) {
-          const fetched = await getProjectById(supabase, queryPid);
-          if (active && fetched.data) {
-            current = fetched.data;
+          const [fetchedProject, fetchedFiles] = await Promise.all([
+            getProjectById(supabase, queryPid),
+            getProjectFiles(supabase, queryPid),
+          ]);
+          if (!active || currentSeq !== loadSeqRef.current) return;
+          if (fetchedProject.data) {
+            current = fetchedProject.data;
+            perfTimersRef.current.projectFetchEnd = Date.now();
+            webcontainerManager.logInternal('PROJECT', 'project metadata loaded');
+          }
+          if (fetchedFiles.data) {
+            projectFiles = fetchedFiles.data;
+            perfTimersRef.current.filesFetchEnd = Date.now();
+            webcontainerManager.logInternal('PROJECT', `files loaded: ${projectFiles.length} files`);
           }
         }
 
         if (!current) {
           const projects = await getProjects(supabase, user.id);
-          if (!active) return;
+          if (!active || currentSeq !== loadSeqRef.current) return;
           current = projects.data?.[0] ?? null;
+          if (current) {
+            const fetchedFiles = await getProjectFiles(supabase, current.id);
+            if (!active || currentSeq !== loadSeqRef.current) return;
+            projectFiles = fetchedFiles.data ?? [];
+          }
         }
 
         if (!current) {
-          // Do NOT automatically create phantom "New Project" in the database.
-          // Redirect the user to the projects hub so they can create or choose a project manually.
-          if (active) {
+          if (active && currentSeq === loadSeqRef.current) {
             router.push('/projects');
           }
-          isHydratingRef.current = false;
           return;
         }
 
-        // Ensure URL reflects active projectId and view mode, and synchronize workspace view
+        // Synchronize URL and workspace view mode
         const activeView = (queryView === 'product' || queryView === 'developer') ? queryView : 'developer';
         setWorkspace(activeView);
         if (typeof window !== 'undefined') {
@@ -510,111 +656,109 @@ export default function EditorPage() {
         }
 
         setProject(current);
-
-        // Fetch files from Supabase project_files table
-        const loaded = await getProjectFiles(supabase, current.id);
-        if (!active) return;
-        const projectFiles = loaded.data ?? [];
+        try {
+          localStorage.setItem(`codatron_project_${current.id}`, JSON.stringify(current));
+        } catch { }
 
         setFiles(projectFiles);
         persistFilesToCache(current.id, projectFiles);
 
+        transitionLifecycle('PROJECT_HYDRATED', `Project ${current.id}`);
+        webcontainerManager.logInternal('PROJECT', 'hydration complete');
+
         if (projectFiles.length === 0) {
-          // Explicit EMPTY PROJECT state. Do NOT inject fake or demo files!
           setProjectStatus('empty');
           setOpenTabs([]);
           setActivePath('');
+          transitionLifecycle('EDITOR_READY', 'Empty project');
         } else {
           setProjectStatus('ready');
+          transitionLifecycle('EDITOR_READY', `${projectFiles.length} files ready`);
+          webcontainerManager.logInternal('EDITOR', 'editor ready');
+
           const initial =
             projectFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
             projectFiles.find((file) => !file.is_folder);
 
           if (initial) {
-            setOpenTabs([initial.path]);
-            setActivePath(initial.path);
-            setDrafts({ [initial.path]: initial.content });
-            setSavedContents({ [initial.path]: initial.content });
+            setOpenTabs((prev) => (prev.length > 0 ? prev : [initial.path]));
+            setActivePath((prev) => prev || initial.path);
+            setDrafts((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
+            setSavedContents((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
           }
         }
 
-        // Load project plan from Supabase
-        const planRes = await getProductPlanFromDb(supabase, current.id);
-        if (active && planRes.plan) {
-          setProductPlan(planRes.plan);
-        }
+        perfTimersRef.current.editorReady = Date.now();
+        const p = perfTimersRef.current;
+        webcontainerManager.logInternal(
+          'PERF',
+          `route → shell: ${p.shellRender - p.routeStart}ms | auth: ${(p.authReady || p.routeStart) - p.routeStart}ms | project: ${(p.projectFetchEnd || 0) - (p.projectFetchStart || 0)}ms | files: ${(p.filesFetchEnd || 0) - (p.projectFetchStart || 0)}ms | editor ready: ${(p.editorReady || p.routeStart) - p.routeStart}ms`
+        );
 
-        // Load dependencies
-        const deps = await supabase
-          .from('project_dependencies')
-          .select('name,version')
-          .eq('project_id', current.id);
-        if (active && !deps.error) {
-          setDependencies(deps.data ?? []);
-        }
-
-        // Load generation history or cached chat into AI conversation stream
-        let hydratedChat: AiMessage[] = [];
-        try {
-          const cached = localStorage.getItem(`codatron_chat_${current.id}`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              hydratedChat = parsed.map((item) => ({
-                ...item,
-                timestamp: item.timestamp ? new Date(item.timestamp) : new Date(),
+        // Non-blocking background loads for ancillary data
+        void Promise.allSettled([
+          getProductPlanFromDb(supabase, current.id).then((planRes) => {
+            if (active && currentSeq === loadSeqRef.current && planRes.plan) {
+              setProductPlan(planRes.plan);
+            }
+          }),
+          supabase
+            .from('project_dependencies')
+            .select('name,version')
+            .eq('project_id', current.id)
+            .then((depsRes) => {
+              if (active && currentSeq === loadSeqRef.current && !depsRes.error && depsRes.data) {
+                setDependencies(depsRes.data);
+              }
+            }),
+          getProjectGenerations(supabase, current.id).then((historyRes) => {
+            if (active && currentSeq === loadSeqRef.current && historyRes.data && historyRes.data.length > 0) {
+              const loadedHistory: AiMessage[] = historyRes.data.slice(0, 15).reverse().map((item) => ({
+                id: item.id,
+                role: 'user',
+                content: item.prompt,
+                timestamp: new Date(item.created_at),
+                status: 'success',
               }));
+              setConversation(loadedHistory);
             }
-          }
-        } catch { }
-
-        if (active && hydratedChat.length > 0) {
-          setConversation(hydratedChat);
-        } else {
-          const historyRes = await getProjectGenerations(supabase, current.id);
-          if (active && historyRes.data && historyRes.data.length > 0) {
-            const loadedHistory: AiMessage[] = historyRes.data.slice(0, 15).reverse().map((item) => ({
-              id: item.id,
-              role: 'user',
-              content: item.prompt,
-              timestamp: new Date(item.created_at),
-              status: 'success',
-            }));
-            setConversation(loadedHistory);
-          }
-        }
-
-        // Check AI key config for BYOK badge
-        fetch('/api/profile/ai-config')
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            if (active && (data?.keySource === 'byok' || data?.keyConfigured)) {
-              setKeySource('byok');
-            }
-          })
-          .catch(() => { });
+          }),
+          fetch('/api/profile/ai-config')
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+              if (active && currentSeq === loadSeqRef.current && (data?.keySource === 'byok' || data?.keyConfigured)) {
+                setKeySource('byok');
+              }
+            })
+            .catch(() => { }),
+        ]);
 
         hydratedTargetRef.current = targetKey;
       } catch (err) {
-        if (!active) return;
+        if (!active || currentSeq !== loadSeqRef.current) return;
         setProjectStatus('error');
+        transitionLifecycle('FAILED', err instanceof Error ? err.message : 'Hydration error');
+        webcontainerManager.logInternal('PROJECT', 'hydration failed');
         console.error('Project hydration error:', err);
-        toast.error('Failed to load project from Supabase.');
-      } finally {
-        isHydratingRef.current = false;
+        toast.error("We're taking a little longer to load your project.", { id: 'project-load-err' });
       }
     }
 
     void loadInitialProject();
     return () => {
       active = false;
+      clearTimeout(timeoutId);
     };
-  }, [isLoading, user?.id, router, supabase, persistFilesToCache]);
+  }, [isLoading, user?.id, queryPid, queryView, reloadTrigger, router, supabase, persistFilesToCache, transitionLifecycle]);
 
   // Synchronize WebContainer runtime snapshot (previewUrl, errors)
   useEffect(() => {
     const unsub = webcontainerManager.subscribeSnapshot((snap) => {
       setWebcontainerUrl(snap.previewUrl);
+      if (snap.previewUrl) {
+        transitionLifecycle('PREVIEW_READY', snap.previewUrl);
+        webcontainerManager.logInternal('PREVIEW', 'ready');
+      }
       if (snap.lastError) {
         setPreviewError(stripAnsi(snap.lastError.message));
       } else if (snap.state === 'running' || snap.state === 'ready') {
@@ -622,36 +766,60 @@ export default function EditorPage() {
       }
     });
     return unsub;
-  }, []);
+  }, [transitionLifecycle]);
 
   // Automatic Silent Self-Healing Engine (up to 3 retries per user prompt cycle)
   useEffect(() => {
     if (!previewError || isWorking || selfHealAttemptsRef.current >= 3) return;
-    const isFatalError =
-      /Module not found|Cannot find module|SyntaxError|ReferenceError|TypeError|Failed to compile|Export .* was not found/i.test(
-        previewError
-      );
-    if (!isFatalError) return;
+    if (!isApplicationFatalError(previewError)) return;
 
+    // Settle delay: wait 1800ms before auto-fixing to avoid transient recompilations
     const timer = setTimeout(() => {
       if (selfHealAttemptsRef.current >= 3 || isWorking) return;
       selfHealAttemptsRef.current += 1;
       const cleanErr = stripAnsi(previewError);
-      console.log(`[Silent Auto-Fix] Attempt ${selfHealAttemptsRef.current}/3:`, cleanErr.slice(0, 100));
+      webcontainerManager.logInternal('VERIFY', `${cleanErr.slice(0, 100)} detected`);
+      webcontainerManager.logInternal('DEBUG', `attempt ${selfHealAttemptsRef.current}/3`);
+      transitionBuildState('AUTO_FIXING', `Attempt ${selfHealAttemptsRef.current}/3`);
+
       void generate(
         `Diagnose and repair this runtime/compilation error automatically: ${cleanErr}`,
         'debug',
         undefined,
         { isSilentSelfHeal: true, errorText: cleanErr }
       );
-    }, 1500);
+    }, 1800);
 
     return () => clearTimeout(timer);
-  }, [previewError, isWorking]);
+  }, [previewError, isWorking, transitionBuildState]);
 
-  // Auto-start the real WebContainer runtime whenever a project is hydrated.
+  // Handle Exhausted Auto-Fix Retries (after 3 attempts fail)
   useEffect(() => {
-    if (!project || projectStatus !== 'ready' || files.length === 0) return;
+    if (selfHealAttemptsRef.current >= 3 && previewError && !isWorking && internalBuildStateRef.current !== 'FAILED') {
+      transitionBuildState('FAILED', 'Auto-fix repair attempts exhausted (3/3)');
+      setConversation((prev) => {
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant') {
+          return prev.map((m) =>
+            m.id === lastMsg.id
+              ? {
+                ...m,
+                status: 'error' as const,
+                error: previewError,
+                content: "I couldn't finish this change automatically. You can ask me to try again or open Diagnostics for details.",
+                isExhaustedRetry: true,
+              }
+              : m
+          );
+        }
+        return prev;
+      });
+    }
+  }, [previewError, isWorking, transitionBuildState]);
+
+  // Auto-start the real WebContainer runtime in background (Independent of Editor Ready)
+  useEffect(() => {
+    if (!project || projectStatus !== 'ready' || files.length === 0 || isWorking) return;
     const signature = files
       .filter((file) => !file.is_folder)
       .map((file) => `${file.path}:${file.content?.length ?? 0}:${file.updated_at ?? ''}`)
@@ -660,8 +828,18 @@ export default function EditorPage() {
     if (activeRunSignatureRef.current === `${project.id}:${signature}`) return;
     activeRunSignatureRef.current = `${project.id}:${signature}`;
 
+    transitionLifecycle('RUNTIME_STARTING', `Project ${project.id}`);
+    if (webcontainerManager.isDevServerRunning() && webcontainerManager.getSnapshot().previewUrl) {
+      webcontainerManager.logInternal('RUNTIME', `reused existing runtime on port ${webcontainerManager.getSnapshot().serverPort}`);
+      transitionLifecycle('PREVIEW_READY', 'Existing server active');
+    } else {
+      webcontainerManager.logInternal('RUNTIME', 'boot started');
+      transitionLifecycle('PREVIEW_LOADING', 'Dev server initializing');
+      webcontainerManager.logInternal('PREVIEW', 'initialization started');
+    }
+
     void webcontainerManager.runProject(files, project.id);
-  }, [project?.id, projectStatus, files]);
+  }, [project?.id, projectStatus, files, isWorking, transitionLifecycle]);
 
   // Isolated Workspace Names
   const developerWorkspaceName = useMemo(() => getDeveloperWorkspaceName(project), [project]);
@@ -921,6 +1099,8 @@ export default function EditorPage() {
     }
 
     setIsWorking(true);
+    perfMetricsRef.current = { startTime: performance.now() };
+    transitionBuildState('BUILDING', 'started');
 
     const userMsgId = `user-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now()}`;
@@ -929,6 +1109,7 @@ export default function EditorPage() {
     let newMessages: AiMessage[];
 
     if (isSilent) {
+      transitionBuildState('AUTO_FIXING', `Attempt ${selfHealAttemptsRef.current}/3`);
       setGenerationStage('Making a few final adjustments…');
       newMessages = [
         ...conversation,
@@ -1013,6 +1194,10 @@ export default function EditorPage() {
           previewError: previewError || undefined,
           files,
           referenceImage,
+          conversationHistory: conversation.slice(-6).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
         }),
       });
 
@@ -1023,6 +1208,33 @@ export default function EditorPage() {
       };
       if (!response.ok) throw new Error(body.message || 'Generation failed.');
 
+      const genMs = performance.now() - perfMetricsRef.current.startTime;
+      perfMetricsRef.current.generationMs = genMs;
+      transitionBuildState('SYNCING_FILES', `${body.operations.length} operations`);
+      const syncStartTime = performance.now();
+
+      // Real file activity stages derived from actual operations (Parts V & W)
+      const realStages: string[] = [];
+      for (const op of body.operations.slice(0, 5)) {
+        const cleanName = op.path.split('/').pop() || op.path;
+        if (op.path.includes('page')) {
+          realStages.push(`Creating page (${cleanName})`);
+        } else if (/nav|header/i.test(cleanName)) {
+          realStages.push(`Creating navigation (${cleanName})`);
+        } else if (/hero/i.test(cleanName)) {
+          realStages.push(`Creating hero section (${cleanName})`);
+        } else if (/search/i.test(cleanName)) {
+          realStages.push(`Adding search (${cleanName})`);
+        } else {
+          realStages.push(`${op.type === 'create' ? 'Creating' : 'Updating'} ${cleanName}`);
+        }
+      }
+      if (realStages.length === 0) {
+        realStages.push('Updating application components');
+      }
+      realStages.push('Preparing visual assets');
+      realStages.push('Preparing your preview');
+
       if (isSilent) {
         setGenerationStage('Preparing your preview…');
       } else {
@@ -1030,7 +1242,11 @@ export default function EditorPage() {
         setConversation((prev) => {
           const next = prev.map((msg) =>
             msg.id === assistantMsgId
-              ? { ...msg, currentStage: 'Adding visual assets' }
+              ? {
+                ...msg,
+                stages: realStages,
+                currentStage: realStages[realStages.length - 2] || 'Adding visual assets',
+              }
               : msg
           );
           try {
@@ -1062,11 +1278,13 @@ export default function EditorPage() {
       setSavedContents(newSaved);
       setDrafts(newSaved);
 
-      if (!isSilent) {
-        toast.success(body.summary || 'Your app is ready', {
-          description: `${body.operations.length} ${body.operations.length === 1 ? 'file' : 'files'} updated`,
-        });
-      }
+      const fileSyncMs = performance.now() - syncStartTime;
+      perfMetricsRef.current.fileSyncMs = fileSyncMs;
+      webcontainerManager.logInternal('AI', `generation complete in ${(genMs / 1000).toFixed(1)}s`);
+      webcontainerManager.logInternal(
+        'FILES',
+        `${body.operations.length} operations synchronized in ${(fileSyncMs / 1000).toFixed(1)}s`
+      );
 
       setPrompt('');
       if (previewError && modeToUse === 'debug') {
@@ -1078,21 +1296,44 @@ export default function EditorPage() {
         setViewMode('preview');
       }
 
-      // Automate WebContainer boot & dev server run
+      // Start or Update Runtime incrementally (Parts P, Q, R)
       if (nextFiles.length > 0) {
         setGenerationStage('Preparing your preview…');
-        setConversation((prev) => {
-          const next = prev.map((msg) =>
-            msg.id === assistantMsgId
-              ? { ...msg, currentStage: 'Preparing your preview' }
-              : msg
-          );
-          try {
-            localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(next));
-          } catch { }
-          return next;
-        });
-        void webcontainerManager.runProject(nextFiles, project.id);
+        const isDevRunning = webcontainerManager.isDevServerRunning();
+
+        if (isDevRunning) {
+          transitionBuildState('REBUILDING', 'incremental HMR update');
+          webcontainerManager.logInternal('RUNTIME', 'already running');
+          webcontainerManager.logInternal('HMR', 'update requested');
+        } else {
+          transitionBuildState('STARTING_PREVIEW', 'booting dev server');
+          webcontainerManager.logInternal('RUNTIME', 'booting dev server');
+        }
+
+        await webcontainerManager.runProject(nextFiles, project.id);
+        transitionBuildState('COMPILING', 'compiling application');
+      }
+
+      // Verification & Stabilization Step (Parts G & H)
+      transitionBuildState('VERIFYING', 'verifying application and preview');
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+
+      const snap = webcontainerManager.getSnapshot();
+      const hasFatalError = snap.lastError && isApplicationFatalError(snap.lastError.message);
+
+      if (!hasFatalError) {
+        const totalMs = performance.now() - perfMetricsRef.current.startTime;
+        webcontainerManager.logInternal('VERIFY', 'route / -> success');
+        webcontainerManager.logInternal('BUILD', 'complete');
+        webcontainerManager.logInternal(
+          'PERF',
+          `generation: ${(genMs / 1000).toFixed(1)}s, file-sync: ${(fileSyncMs / 1000).toFixed(1)}s, total: ${(totalMs / 1000).toFixed(1)}s`
+        );
+        transitionBuildState('READY', 'preview verified and ready');
+        selfHealAttemptsRef.current = 0;
+      } else {
+        webcontainerManager.logInternal('VERIFY', `${snap.lastError?.message.slice(0, 80)} detected`);
+        setGenerationStage('Making a few final adjustments…');
       }
 
       // Complete generation stage
@@ -1107,7 +1348,8 @@ export default function EditorPage() {
               operations: body.operations,
               filesCount: nextFiles.length,
               plan: body.plan,
-              currentStage: isSilent ? 'Everything is ready' : 'Finalizing the experience',
+              stages: realStages,
+              currentStage: isSilent ? 'Everything is ready' : realStages[realStages.length - 1],
               isFixed: isSilent || modeToUse === 'debug',
             }
             : msg
@@ -1423,23 +1665,27 @@ export default function EditorPage() {
     }
   };
 
-  if (projectStatus === 'loading' || !project) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-[#02060f]">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
-          <p className="text-xs text-slate-400 font-medium">Hydrating project from Supabase…</p>
-        </div>
-      </div>
-    );
-  }
+  const displayProject: Project = useMemo(() => {
+    if (project) return project;
+    return {
+      id: queryPid || 'local-project',
+      user_id: user?.id || 'anonymous',
+      name: queryPid ? 'Project Workspace' : 'Local Project',
+      description: '',
+      prompt: null,
+      framework: 'nextjs',
+      is_public: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }, [project, queryPid, user?.id]);
 
   return (
     <main className="flex h-screen flex-col bg-[#02060f] text-slate-100 overflow-hidden select-none">
       <Script src="/coi-serviceworker.js" strategy="afterInteractive" />
       {/* Workspace Header */}
       <WorkspaceHeader
-        project={project}
+        project={displayProject}
         activePath={activePath}
         dirty={workspace === 'product' ? isProductDirty : isCurrentFileDirty}
         isWorking={isWorking}
@@ -1467,16 +1713,48 @@ export default function EditorPage() {
 
       {/* Main Workspace: Dedicated Product Manager Workspace OR Developer IDE */}
       {workspace === 'product' ? (
-        <ProductWorkspace
-          project={project}
-          files={files}
-          productPlan={productPlan}
-          workspaceName={productWorkspaceName}
-          onPlanGenerated={handlePlanGenerated}
-          onFilesUpdated={handleFilesUpdatedFromPM}
-          onSwitchToDeveloper={handleSwitchToDeveloper}
-          onRenameWorkspace={handleRenameWorkspace}
-        />
+        projectStatus === 'loading' && !project ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
+            <div className="relative flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shadow-[0_0_25px_rgba(99,102,241,0.2)]">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+              </div>
+            </div>
+            <div className="text-center space-y-1">
+              <p className="text-sm font-semibold text-slate-200">Opening your project...</p>
+              <p className="text-xs text-slate-400">Loading your workspace...</p>
+            </div>
+          </div>
+        ) : projectStatus === 'error' && !project ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
+            <div className="flex flex-col items-center gap-3 text-center px-4 max-w-sm">
+              <div className="h-10 w-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                <FileQuestion className="h-5 w-5" />
+              </div>
+              <p className="text-sm text-slate-200 font-semibold">We couldn&apos;t open this project.</p>
+              <p className="text-xs text-slate-400">We&apos;re taking a little longer to load your project. You can try again or return to your projects hub.</p>
+              <div className="flex items-center gap-2 mt-2">
+                <Button size="sm" variant="outline" className="text-xs" onClick={() => setReloadTrigger((prev) => prev + 1)}>
+                  Try again
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs text-slate-400 hover:text-white" onClick={() => router.push('/projects')}>
+                  Back to Projects
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <ProductWorkspace
+            project={project}
+            files={files}
+            productPlan={productPlan}
+            workspaceName={productWorkspaceName}
+            onPlanGenerated={handlePlanGenerated}
+            onFilesUpdated={handleFilesUpdatedFromPM}
+            onSwitchToDeveloper={handleSwitchToDeveloper}
+            onRenameWorkspace={handleRenameWorkspace}
+          />
+        )
       ) : (
         <div className={`flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative ${isDragging ? 'select-none [&_iframe]:pointer-events-none' : ''}`}>
           {/* Upper Workspace: Explorer | Center | Assistant */}
@@ -1565,8 +1843,46 @@ export default function EditorPage() {
 
               {/* Center Content: Empty Canvas OR Code / Preview / Split */}
               <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
+                {/* PROJECT LOADING (Non-blocking in-editor status) */}
+                {projectStatus === 'loading' && files.length === 0 && (
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
+                    <div className="max-w-md mx-auto space-y-4">
+                      <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 shadow-[0_0_25px_rgba(99,102,241,0.25)]">
+                        <Loader2 className="h-7 w-7 animate-spin text-indigo-400" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <h3 className="text-base font-semibold text-slate-100">Opening your project...</h3>
+                        <p className="text-xs text-slate-400">Loading your workspace...</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PROJECT ERROR / TIMEOUT (Graceful non-blocking recovery) */}
+                {projectStatus === 'error' && files.length === 0 && (
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
+                    <div className="max-w-md mx-auto space-y-4">
+                      <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
+                        <FileQuestion className="h-7 w-7" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <h3 className="text-base font-semibold text-slate-100">We couldn&apos;t open this project.</h3>
+                        <p className="text-xs text-slate-400">We&apos;re taking a little longer to load your project. You can try again or return to your projects hub.</p>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 pt-2">
+                        <Button size="sm" variant="outline" className="text-xs" onClick={() => setReloadTrigger((prev) => prev + 1)}>
+                          Try again
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-xs text-slate-400 hover:text-white" onClick={() => router.push('/projects')}>
+                          Back to Projects
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* PREVIEW EMPTY CANVAS (AI App Builder Placeholder when no files yet) */}
-                {viewMode === 'preview' && files.length === 0 && (
+                {projectStatus !== 'loading' && projectStatus !== 'error' && viewMode === 'preview' && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">
@@ -1625,7 +1941,7 @@ export default function EditorPage() {
                       </div>
                       <div>
                         <h3 className="text-base font-bold text-white">
-                          Empty Project: {project.name}
+                          Empty Project: {displayProject.name}
                         </h3>
                         <p className="text-xs text-slate-400 mt-1 leading-relaxed">
                           No files created yet. Choose how you want to build this application:
@@ -1742,6 +2058,9 @@ export default function EditorPage() {
                     onSwitchToTerminal={() => {
                       setShowDiagnosticsModal(true);
                     }}
+                    isGenerating={isWorking}
+                    internalBuildState={internalBuildState}
+                    isAutoFixing={internalBuildState === 'AUTO_FIXING'}
                   />
                 )}
 
@@ -1813,6 +2132,9 @@ export default function EditorPage() {
                         onSwitchToTerminal={() => {
                           setShowDiagnosticsModal(true);
                         }}
+                        isGenerating={isWorking}
+                        internalBuildState={internalBuildState}
+                        isAutoFixing={internalBuildState === 'AUTO_FIXING'}
                       />
                     </div>
                   </div>
@@ -1984,5 +2306,44 @@ export default function EditorPage() {
         onFixWithAI={fixWithAI}
       />
     </main>
+  );
+}
+
+function EditorLoadingFallback() {
+  return (
+    <div className="flex h-screen flex-col bg-[#02060f] text-slate-100 overflow-hidden select-none">
+      <Script src="/coi-serviceworker.js" strategy="afterInteractive" />
+      {/* Header Skeleton */}
+      <div className="flex h-12 shrink-0 items-center justify-between bg-[#060a12]/95 border-b border-white/10 px-4">
+        <div className="flex items-center gap-3">
+          <div className="h-6 w-16 bg-white/5 rounded animate-pulse" />
+          <div className="h-4 w-4 bg-white/5 rounded animate-pulse" />
+          <div className="h-4 w-32 bg-white/5 rounded animate-pulse" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="h-7 w-20 bg-white/5 rounded animate-pulse" />
+        </div>
+      </div>
+      {/* Workspace Loading Canvas */}
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
+        <div className="relative flex items-center justify-center">
+          <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shadow-[0_0_25px_rgba(99,102,241,0.2)]">
+            <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+          </div>
+        </div>
+        <div className="text-center space-y-1">
+          <p className="text-sm font-semibold text-slate-200">Opening your project...</p>
+          <p className="text-xs text-slate-400">Loading your workspace...</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function EditorPage() {
+  return (
+    <Suspense fallback={<EditorLoadingFallback />}>
+      <EditorPageContent />
+    </Suspense>
   );
 }

@@ -34,6 +34,7 @@ export async function POST(
       previewError?: string;
       files?: ProjectFile[];
       referenceImage?: string;
+      conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
     };
 
     if (!body.prompt?.trim() || body.prompt.length > 8_000) {
@@ -140,7 +141,8 @@ export async function POST(
           body.selectedCode,
           body.previewError,
           body.mode,
-          body.referenceImage
+          body.referenceImage,
+          body.conversationHistory
         ),
         {
           aiConfig,

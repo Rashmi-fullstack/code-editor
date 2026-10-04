@@ -346,4 +346,29 @@ test('selectProjectContext forwards referenceImage and buildFullCodingAgentSyste
   assert.match(systemPrompt, /images\.unsplash\.com/);
 });
 
+test('selectProjectContext forwards conversationHistory and system prompt includes conversational rules', () => {
+  const history = [
+    { role: 'user' as const, content: 'Build a Netflix clone' },
+    { role: 'assistant' as const, content: 'I built the streaming homepage with a hero section and movie rows.' },
+  ];
+
+  const context = selectProjectContext(
+    [],
+    'app/page.tsx',
+    undefined,
+    undefined,
+    'code',
+    undefined,
+    history
+  );
+
+  assert.ok(context.conversationHistory);
+  assert.equal(context.conversationHistory.length, 2);
+
+  const systemPrompt = buildFullCodingAgentSystemPrompt(context);
+  assert.match(systemPrompt, /CONVERSATION THREAD & ITERATIVE CONTEXT/);
+  assert.match(systemPrompt, /Build a Netflix clone/);
+  assert.match(systemPrompt, /CRITICAL FOR ITERATIVE PROMPTS/);
+});
+
 

@@ -323,7 +323,7 @@ module.exports = nextConfig;
               content: JSON.stringify(parsedTs, null, 2),
             };
           }
-        } catch {}
+        } catch { }
       }
 
       // Heal any corrupted hook dependency arrays or expressions like "}, Example)" -> "}, [])"
@@ -705,12 +705,12 @@ class WebContainerRuntimeManager implements RuntimeManager {
 
     // Global server-ready listener
     instance.on('server-ready', (port: number, url: string) => {
-       this.serverPort = port;
-       this.previewUrl = url;
-       this.lastError = null;
-       this.setState('running');
-       this.emitDevOutput(`\r\n\x1b[1;35m✔ Server ready on port ${port}: ${url}\x1b[0m\r\n`);
-       this.notifySnapshot();
+      this.serverPort = port;
+      this.previewUrl = url;
+      this.lastError = null;
+      this.setState('running');
+      this.emitDevOutput(`\r\n\x1b[1;35m✔ Server ready on port ${port}: ${url}\x1b[0m\r\n`);
+      this.notifySnapshot();
     });
 
     // Port event listener
@@ -1320,11 +1320,21 @@ exports.installBindings = async function() { return Promise.resolve(); };
     }
   }
 
+  public logInternal(tag: string, message: string): void {
+    const formatted = `[${tag}] ${message}`;
+    this.appendDevLog(formatted);
+    this.emitDevOutput(`\x1b[90m${formatted}\x1b[0m\r\n`);
+  }
+
+  public isDevServerRunning(): boolean {
+    return this.state === 'running' && Boolean(this.previewUrl) && Boolean(this.devProcess);
+  }
+
   private appendDevLog(chunk: string): void {
     const lines = chunk.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     for (const line of lines) {
       this.recentDevLogs.push(line);
-      if (this.recentDevLogs.length > 80) {
+      if (this.recentDevLogs.length > 300) {
         this.recentDevLogs.shift();
       }
     }
@@ -1440,9 +1450,9 @@ exports.installBindings = async function() { return Promise.resolve(); };
                 cleanData.includes('Module not found'))
             ) {
               const lines = cleanData.split('\n');
-              const errorLine = lines.find((l: string) => 
-                l.includes('Error:') || 
-                l.includes('ReferenceError') || 
+              const errorLine = lines.find((l: string) =>
+                l.includes('Error:') ||
+                l.includes('ReferenceError') ||
                 l.includes('Failed to compile') ||
                 l.includes('SyntaxError') ||
                 l.includes('TypeError') ||
@@ -1670,7 +1680,7 @@ exports.installBindings = async function() { return Promise.resolve(); };
     if (this.devProcess) {
       try {
         this.devProcess.kill();
-      } catch {}
+      } catch { }
       this.devProcess = null;
     }
     this.previewUrl = null;

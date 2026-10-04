@@ -691,7 +691,8 @@ export function selectProjectContext(
   selectedCode?: string,
   previewError?: string,
   mode?: 'build' | 'code' | 'debug',
-  referenceImage?: string
+  referenceImage?: string,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
 ) {
   const sourceFiles = files.filter((file) => !file.is_folder);
   const active = sourceFiles.find((file) => file.path === activePath);
@@ -723,6 +724,7 @@ export function selectProjectContext(
     selectedCode: selectedCode?.slice(0, 12_000),
     previewError: previewError?.slice(0, 8_000),
     referenceImage,
+    conversationHistory: conversationHistory?.slice(-6),
   };
 }
 
@@ -1097,6 +1099,21 @@ The user has attached a visual reference image / screenshot to their prompt.
 Visually align the generated application with this reference:
 - Mirror the visual hierarchy, header/navigation design, card grid arrangements, color palette, and spacing.
 - Maintain the visual tone and layout structure presented in the reference.
+` : ''}
+${context.conversationHistory && context.conversationHistory.length > 0 ? `
+==================================================
+CONVERSATION THREAD & ITERATIVE CONTEXT
+==================================================
+This request is part of an ongoing conversation between the user and Codatron AI.
+Recent dialogue turns:
+${context.conversationHistory.map((m) => `${m.role === 'user' ? 'User' : 'Codatron'}: "${m.content.slice(0, 300)}"`).join('\n')}
+
+CRITICAL FOR ITERATIVE PROMPTS:
+- The current user request modifies or extends the work from previous prompts (e.g., "Make the hero taller", "Add more movie posters", "Add search", "Use a purple accent").
+- Understand what has already been built from the history and existing project files.
+- NEVER wipe out or regenerate working components unless explicitly asked.
+- Make targeted, surgical updates to the specific components or files involved.
+- In your "summary", provide a natural, conversational response that directly addresses the user's request (e.g., "Done — I expanded the hero section and added more movie posters. Your preview has been updated." or concise bullet points of what was added).
 ` : ''}
 If the project already has an established visual system:
 

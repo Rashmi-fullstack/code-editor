@@ -4,9 +4,7 @@ import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 
 const VIDEO_SRC =
-  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260912_104303_0c6d60b2-9353-408e-9449-585108a22fb5.mp4';
-const POSTER_SRC =
-  'https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/130837c4-0244-4f37-9c61-8d801d93fd29.jpg';
+  'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4';
 
 export default function AnimatedBackground() {
   const pathname = usePathname();
@@ -32,15 +30,13 @@ export default function AnimatedBackground() {
       const res = video.play();
       if (res && typeof res.catch === 'function') {
         res.catch(() => {
-          // Browser autoplay restrictions can still delay playback until interaction.
+          // Autoplay handled safely
         });
       }
     };
 
     if (!isHome) {
       video.pause();
-      video.removeAttribute('src');
-      video.load();
       return;
     }
 
@@ -92,22 +88,14 @@ export default function AnimatedBackground() {
     };
   }, [isHome]);
 
-  // Keep DOM mounted in background so decoded video buffer remains in memory across page navigations,
-  // but strictly hide and pause when on other sections (Projects, Editor, Profile)
   return (
     <div
       aria-hidden="true"
-      className={`fixed inset-0 z-0 pointer-events-none overflow-hidden select-none bg-[#02060f] transition-opacity duration-300 ${
-        isHome ? 'opacity-100' : 'opacity-0'
+      className={`fixed inset-0 z-0 pointer-events-none overflow-hidden select-none bg-[#000000] transition-opacity duration-300 ${
+        isHome ? 'opacity-100 block' : 'opacity-0 hidden'
       }`}
-      style={{
-        display: isHome ? 'block' : 'none',
-        backgroundImage: isHome ? `url(${POSTER_SRC})` : 'none',
-        backgroundSize: 'cover',
-        backgroundPosition: '50% 50%',
-      }}
     >
-      {/* High-Performance Looping Hero Video — 0% bandwidth duplication, seamless native hardware loop */}
+      {/* High-Performance Looping Full-Bleed Background Video — No old poster image */}
       <video
         ref={videoRef}
         src={VIDEO_SRC}
@@ -115,19 +103,15 @@ export default function AnimatedBackground() {
         muted
         loop
         playsInline
-        preload="metadata"
-        poster={POSTER_SRC}
-        className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none opacity-90"
+        preload="auto"
+        className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none"
       />
 
-      {/* Atmospheric Volumetric Veil */}
+      {/* Subtle atmospheric tint so text remains readable without washing out the video */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: `
-            radial-gradient(140% 60% at 50% 40%, rgba(6, 10, 18, 0.15) 0%, rgba(6, 10, 18, 0.08) 50%, rgba(6, 10, 18, 0.02) 100%),
-            linear-gradient(180deg, rgba(6, 10, 18, 0) 35%, rgba(2, 6, 15, 0.65) 75%, #02060f 100%)
-          `,
+          background: 'rgba(0, 0, 0, 0.25)',
         }}
       />
     </div>

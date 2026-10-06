@@ -34,19 +34,19 @@ export function WorkspaceSwitcher({
 
   return (
     <div
-      className={`inline-flex items-center rounded-xl bg-black/40 border border-white/10 p-0.5 shadow-inner ${className}`}
+      className={`inline-flex items-center rounded-full bg-[#28282a] border border-white/12 p-1 shadow-inner ${className}`}
       role="group"
       aria-label="Workspace Switcher"
     >
       <button
         type="button"
         onClick={() => handleSelect('developer')}
-        className={`flex items-center gap-1.5 rounded-lg font-medium transition cursor-pointer ${
-          compact ? 'px-2 py-1 text-[11px]' : 'px-2.5 sm:px-3 py-1 text-xs'
+        className={`flex items-center gap-1.5 rounded-full font-medium transition cursor-pointer ${
+          compact ? 'px-2.5 py-1 text-[11px]' : 'px-3 sm:px-3.5 py-1 text-xs'
         } ${
           currentWorkspace === 'developer'
-            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30 font-semibold'
-            : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            ? 'bg-white text-black font-semibold shadow-md'
+            : 'text-slate-400 hover:text-slate-200'
         }`}
         title="Switch to Developer IDE"
       >
@@ -57,12 +57,12 @@ export function WorkspaceSwitcher({
       <button
         type="button"
         onClick={() => handleSelect('product')}
-        className={`flex items-center gap-1.5 rounded-lg font-medium transition cursor-pointer ${
-          compact ? 'px-2 py-1 text-[11px]' : 'px-2.5 sm:px-3 py-1 text-xs'
+        className={`flex items-center gap-1.5 rounded-full font-medium transition cursor-pointer ${
+          compact ? 'px-2.5 py-1 text-[11px]' : 'px-3 sm:px-3.5 py-1 text-xs'
         } ${
           currentWorkspace === 'product'
-            ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30 font-semibold'
-            : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+            ? 'bg-white text-black font-semibold shadow-md'
+            : 'text-slate-400 hover:text-slate-200'
         }`}
         title="Switch to Product Manager"
       >

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/server';
+import { getCurrentUser } from '@/lib/auth';
 import { encryptApiKey, maskApiKey } from '@/lib/ai/crypto';
 import { DEVELOPER_IDE_CONFIG } from '@/lib/ai/developer-ide-config';
 
@@ -13,8 +14,11 @@ export async function GET() {
   try {
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
 
     if (!user) {
       return NextResponse.json({ message: 'Authentication required' }, { status: 401 });
@@ -54,8 +58,11 @@ export async function POST(request: Request) {
   try {
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
 
     if (!user) {
       return NextResponse.json({ message: 'Authentication required' }, { status: 401 });
@@ -192,8 +199,11 @@ export async function DELETE() {
   try {
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
 
     if (!user) {
       return NextResponse.json({ message: 'Authentication required' }, { status: 401 });

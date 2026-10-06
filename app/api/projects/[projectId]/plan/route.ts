@@ -36,18 +36,40 @@ export async function POST(
       );
     }
 
+    // Check canonical account status and role from database
+    const { data: userProfile } = await supabase
+      .from('profiles')
+      .select('status, role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (userProfile?.status === 'suspended') {
+      return NextResponse.json(
+        { message: 'Your account has been suspended. Please contact administrator.' },
+        { status: 403 }
+      );
+    }
+
+    const isAdmin = userProfile?.role === 'admin';
+
     // 2. Strict Project Ownership Verification
     const { data: project, error: projError } = await supabase
       .from('projects')
       .select('id, name, user_id')
       .eq('id', projectId)
-      .eq('user_id', user.id)
       .maybeSingle();
 
     if (projError || !project) {
       return NextResponse.json(
         { message: 'Project not found or access denied.' },
         { status: 404 }
+      );
+    }
+
+    if (project.user_id !== user.id && !isAdmin) {
+      return NextResponse.json(
+        { message: 'Project access denied.' },
+        { status: 403 }
       );
     }
 
@@ -62,17 +84,24 @@ export async function POST(
       );
     }
 
-    // 3. Server-Side Atomic Credit Reservation
-    const creditReservation = await reserveCredit(supabase, user.id);
-    if (!creditReservation.success) {
-      return NextResponse.json(
-        {
-          message:
-            creditReservation.message ||
-            'No AI credits remaining. Your initial credit limit has been reached.',
-        },
-        { status: 403 }
-      );
+    // 3. Server-Side Atomic Credit Reservation (Standard change cost = 10 credits)
+    const cost = 10;
+    if (!isAdmin) {
+      const creditReservation = await reserveCredit(supabase, user.id, cost);
+      if (!creditReservation.success) {
+        return NextResponse.json(
+          {
+            code: 'INSUFFICIENT_CREDITS',
+            message:
+              creditReservation.message ||
+              "You've used your Codatron AI credits. Upgrade your plan to continue building with AI.",
+            remaining: creditReservation.remaining ?? 0,
+            required: cost,
+            upgradeRequired: true,
+          },
+          { status: 403 }
+        );
+      }
     }
 
     const { data: files } = await supabase
@@ -97,8 +126,10 @@ export async function POST(
       });
 
       // 5. Finalize Credit on Success
-      await finalizeCredit(supabase, user.id, true);
-      isCreditFinalized = true;
+      if (!isAdmin) {
+        await finalizeCredit(supabase, user.id, true, cost);
+        isCreditFinalized = true;
+      }
 
       // 6. Record Real Token Usage with Credit Flag
       await trackAiUsage(supabase, {
@@ -110,7 +141,7 @@ export async function POST(
         outputTokens: tokenUsage.outputTokens,
         totalTokens: tokenUsage.totalTokens,
         success: true,
-        creditUsed: 1,
+        creditUsed: isAdmin ? 0 : cost,
         latencyMs: Date.now() - startTime,
       });
 
@@ -126,11 +157,13 @@ export async function POST(
         plan,
         keySource: aiConfig.keySource,
         usage: tokenUsage,
+        creditCost: isAdmin ? 0 : cost,
+        isAdmin,
       });
     } catch (operationError) {
       // 7. On Failure: Release Reserved Credit
-      if (!isCreditFinalized) {
-        await finalizeCredit(supabase, user.id, false);
+      if (!isAdmin && !isCreditFinalized) {
+        await finalizeCredit(supabase, user.id, false, cost);
         isCreditFinalized = true;
       }
       throw operationError;

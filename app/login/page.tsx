@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, Suspense, useCallback, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Loader2 } from "lucide-react";
 import GoogleSignIn from "@/components/google-sign-in";
@@ -19,12 +20,15 @@ function LoginForm() {
   const [googlePending, setGooglePending] = useState(false);
 
   const finish = useCallback(
-    async (optimisticUser?: User) => {
+    async (optimisticUser?: User, isAdmin?: boolean, redirectTo?: string) => {
       await refresh(optimisticUser);
-      // Strictly default to Home ("/") unless an explicit non-editor return URL was requested
-      const rawNext = search.get("next");
-      const nextUrl =
-        rawNext && rawNext !== "/editor" && rawNext.startsWith("/") ? rawNext : "/";
+      const rawNext = search.get("redirect") || search.get("next") || redirectTo;
+      let nextUrl = "/";
+      if (isAdmin && (rawNext === "/admin" || !rawNext || rawNext === "/")) {
+        nextUrl = "/admin";
+      } else if (rawNext && rawNext !== "/editor" && rawNext.startsWith("/")) {
+        nextUrl = rawNext;
+      }
       router.push(nextUrl);
       router.refresh();
     },
@@ -50,7 +54,7 @@ function LoginForm() {
         return setMessage(data.message || "Failed to log in.");
       }
 
-      await finish(data.user);
+      await finish(data.user, data.isAdmin, data.redirectTo);
     } catch {
       setPending(false);
       setMessage("Network error occurred during login. Please try again.");
@@ -85,7 +89,7 @@ function LoginForm() {
         )}
         <button
           disabled={pending || googlePending}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-3 font-medium shadow-lg shadow-blue-500/20 transition hover:to-purple-700 disabled:opacity-60 cursor-pointer"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-white hover:bg-slate-200 text-black font-semibold h-11 px-5 py-2.5 shadow-[0_0_24px_rgba(255,255,255,0.25)] transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
         >
           {pending ? (
             "Logging in..."
@@ -103,6 +107,12 @@ function LoginForm() {
         onError={setMessage}
         onLoadingChange={setGooglePending}
       />
+      <p className="mt-7 text-center text-sm text-slate-400">
+        Don&apos;t have an account?{" "}
+        <Link href="/signup" className="font-medium text-indigo-300 hover:text-white">
+          Sign up
+        </Link>
+      </p>
     </>
   );
 }

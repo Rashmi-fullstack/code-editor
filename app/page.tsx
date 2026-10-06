@@ -17,6 +17,7 @@ import {
 import Link from 'next/link';
 import Navbar from '@/components/navbar';
 import Footer from '@/components/footer';
+import AnimatedBackground from '@/components/animated-background';
 
 const fadeInUp = {
   initial: { opacity: 0, y: 24 },
@@ -95,6 +96,9 @@ const steps = [
 export default function Home() {
   return (
     <div className="relative min-h-screen text-white bg-transparent selection:bg-indigo-500/30 selection:text-white overflow-x-hidden">
+      {/* Persistent hero video player strictly on Home (/) */}
+      <AnimatedBackground />
+
       {/* 1. Prompt UI Floating Navbar */}
       <Navbar />
 
@@ -131,15 +135,6 @@ export default function Home() {
             Describe a feature, app, or workflow in plain English. Codatron turns it into
             product requirements, full-stack code, and live previews in one collaborative workspace.
           </p>
-
-          {/* CTA — Prompt UI Signature White Pill */}
-          <Link
-            href="/editor?view=developer"
-            className="font-sans font-semibold text-[clamp(14px,1.5vw,15.5px)] text-black bg-white px-[clamp(28px,3.5vw,36px)] py-[clamp(13px,1.8vh,16px)] rounded-full inline-flex items-center justify-center gap-2 shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_0_24px_rgba(255,255,255,0.35),0_0_48px_rgba(255,255,255,0.15)] hover:shadow-[0_0_0_1px_rgba(255,255,255,0.3),0_0_32px_rgba(255,255,255,0.5),0_0_64px_rgba(255,255,255,0.25)] hover:-translate-y-0.5 hover:scale-[1.02] transition-all duration-250 animate-[revealPulse_0.85s_cubic-bezier(0.22,1,0.36,1)_0.4s_both]"
-          >
-            Get Started
-            <ArrowRight className="w-4 h-4" />
-          </Link>
         </main>
       </section>
 
@@ -177,7 +172,7 @@ export default function Home() {
               whileHover={{ y: -4 }}
               transition={{ duration: 0.3 }}
             >
-              <Link href="/product" className="block h-full group focus-visible:outline-none">
+              <Link href="/editor?view=product" className="block h-full group focus-visible:outline-none">
                 <div className="relative overflow-hidden p-8 sm:p-10 rounded-[32px] bg-black/40 border border-white/20 backdrop-blur-2xl transition-all duration-300 hover:border-white/35 hover:bg-black/55 shadow-[0_24px_60px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.2)] flex flex-col justify-between h-full">
                   {/* Top Specular Line */}
                   <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />

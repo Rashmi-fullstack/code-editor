@@ -105,7 +105,7 @@ export function WorkspaceHeader({
   onRenameWorkspace,
   onRunPreview,
 }: WorkspaceHeaderProps) {
-  const { creditsRemaining, creditLimit } = useCredits();
+  const { creditsRemaining, creditLimit, isAdmin } = useCredits();
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [relativeSavedText, setRelativeSavedText] = useState<string>(() => getRelativeText(lastSavedAt));
@@ -168,14 +168,13 @@ export function WorkspaceHeader({
   }
 
   return (
-    <header className="relative flex h-12 shrink-0 items-center justify-between bg-[#060a12]/95 backdrop-blur-xl border-b border-white/10 px-3 sm:px-4 select-none z-10">
+    <header className="relative flex h-12 shrink-0 items-center justify-between bg-black/40 backdrop-blur-xl border-b border-white/10 px-3 sm:px-4 select-none z-10">
       {/* Bottom glowing line during active AI synthesis */}
       <div
-        className={`absolute inset-x-0 bottom-0 h-[2px] transition-all duration-500 ${
-          isWorking
-            ? 'bg-gradient-to-r from-transparent via-indigo-500 to-purple-500 opacity-90 shadow-[0_0_10px_rgba(99,102,241,0.8)]'
+        className={`absolute inset-x-0 bottom-0 h-[2px] transition-all duration-500 ${isWorking
+            ? 'bg-gradient-to-r from-transparent via-white/80 to-transparent opacity-90 shadow-[0_0_10px_rgba(255,255,255,0.8)]'
             : 'bg-transparent'
-        }`}
+          }`}
       />
 
       {/* Left: [← Projects] + Brand + Breadcrumbs */}
@@ -185,7 +184,7 @@ export function WorkspaceHeader({
           <TooltipTrigger asChild>
             <Link
               href="/projects"
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-white/10 transition border border-white/5"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium text-slate-300 hover:text-white hover:bg-white/10 transition border border-white/10 bg-white/[0.04]"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Projects</span>
@@ -201,19 +200,13 @@ export function WorkspaceHeader({
         {/* Brand */}
         <Link
           href="/"
-          className="group flex items-center gap-1.5 rounded-lg py-1 text-xs font-semibold text-white transition hover:opacity-90"
+          className="group flex items-center gap-2 rounded-full py-1 text-xs font-semibold text-white transition hover:opacity-90"
         >
-          <span
-            className={`flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md transition-all duration-500 ${
-              isWorking
-                ? 'shadow-indigo-500/50 scale-105 ring-2 ring-indigo-400/50'
-                : 'shadow-indigo-500/20'
-            }`}
-          >
-            <Sparkles className="h-3 w-3 text-white" />
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md overflow-hidden shrink-0">
+            <img src="/assets/logo.webp" alt="Codatron" className="h-4 w-4 object-contain" />
           </span>
           <span className="font-bold tracking-tight text-white hidden lg:inline">
-            Codatron
+            Codatron.ai
           </span>
         </Link>
 
@@ -344,7 +337,7 @@ export function WorkspaceHeader({
                 variant="outline"
                 size="sm"
                 onClick={onRunPreview}
-                className="h-8 px-2.5 text-xs font-medium border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 gap-1.5"
+                className="h-8 px-3 text-xs font-semibold rounded-full border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 gap-1.5"
               >
                 <Play className="h-3 w-3 fill-emerald-400 text-emerald-400" />
                 <span className="hidden sm:inline">Preview</span>
@@ -364,11 +357,10 @@ export function WorkspaceHeader({
                 variant="ghost"
                 size="sm"
                 onClick={onToggleFiles}
-                className={`h-8 w-8 p-0 transition ${
-                  showFiles
-                    ? 'bg-white/10 text-white'
+                className={`h-8 w-8 rounded-full p-0 transition ${showFiles
+                    ? 'bg-white/15 text-white'
                     : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
+                  }`}
               >
                 <FolderTree className="h-4 w-4" />
                 <span className="sr-only">Toggle Files</span>
@@ -388,11 +380,10 @@ export function WorkspaceHeader({
                 variant="ghost"
                 size="sm"
                 onClick={onToggleAiPanel}
-                className={`h-8 w-8 p-0 transition ${
-                  showAiPanel
-                    ? 'bg-white/10 text-white'
+                className={`h-8 w-8 rounded-full p-0 transition ${showAiPanel
+                    ? 'bg-white/15 text-white'
                     : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
+                  }`}
               >
                 <MessageSquareCode className="h-4 w-4" />
                 <span className="sr-only">Toggle AI Assistant</span>
@@ -416,7 +407,7 @@ export function WorkspaceHeader({
               size="sm"
               disabled={!hasFiles}
               onClick={() => void onExportZip()}
-              className="h-8 px-2 text-xs text-slate-300 hover:text-white hover:bg-white/5 gap-1.5 hidden md:flex disabled:opacity-40 disabled:cursor-not-allowed"
+              className="h-8 px-3 rounded-full border border-white/10 bg-white/[0.03] hover:bg-white/10 text-xs text-slate-300 hover:text-white gap-1.5 hidden md:flex disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="h-3.5 w-3.5" />
               <span className="hidden lg:inline">Export</span>
@@ -434,11 +425,10 @@ export function WorkspaceHeader({
               size="sm"
               onClick={() => void onSaveProject?.()}
               disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
-              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
-                dirty || saveState === 'unsaved'
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
-                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
-              }`}
+              className={`h-8 px-3.5 text-xs font-semibold gap-1.5 transition shadow-sm rounded-l-full rounded-r-none ${dirty || saveState === 'unsaved'
+                  ? 'bg-white hover:bg-slate-200 text-black shadow-md'
+                  : 'bg-white/10 text-slate-300 hover:bg-white/15 border-y border-l border-white/12'
+                }`}
             >
               {isWorking || saveState === 'saving' ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -453,11 +443,10 @@ export function WorkspaceHeader({
               size="sm"
               onClick={() => void onSaveProject?.()}
               disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
-              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
-                dirty || saveState === 'unsaved'
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
-                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
-              }`}
+              className={`h-8 px-3.5 text-xs font-semibold gap-1.5 transition shadow-sm rounded-l-full rounded-r-none ${dirty || saveState === 'unsaved'
+                  ? 'bg-white hover:bg-slate-200 text-black shadow-md'
+                  : 'bg-white/10 text-slate-300 hover:bg-white/15 border-y border-l border-white/12'
+                }`}
             >
               {isWorking || saveState === 'saving' ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -472,11 +461,10 @@ export function WorkspaceHeader({
               size="sm"
               onClick={() => void onSave()}
               disabled={(!dirty && saveState !== 'unsaved') || isWorking || saveState === 'saving'}
-              className={`h-8 px-2.5 text-xs font-medium gap-1.5 transition shadow-sm rounded-r-none ${
-                dirty || saveState === 'unsaved'
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
-                  : 'bg-white/5 text-slate-400 hover:bg-white/10'
-              }`}
+              className={`h-8 px-3.5 text-xs font-semibold gap-1.5 transition shadow-sm rounded-l-full rounded-r-none ${dirty || saveState === 'unsaved'
+                  ? 'bg-white hover:bg-slate-200 text-black shadow-md'
+                  : 'bg-white/10 text-slate-300 hover:bg-white/15 border-y border-l border-white/12'
+                }`}
             >
               {isWorking || saveState === 'saving' ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -493,18 +481,17 @@ export function WorkspaceHeader({
             <DropdownMenuTrigger asChild>
               <Button
                 size="sm"
-                className={`h-8 w-6 p-0 rounded-l-none border-l border-white/10 transition ${
-                  dirty || saveState === 'unsaved'
-                    ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                    : 'bg-white/5 text-slate-400 hover:bg-white/10'
-                }`}
+                className={`h-8 w-6 p-0 rounded-r-full rounded-l-none border-l transition ${dirty || saveState === 'unsaved'
+                    ? 'bg-white hover:bg-slate-200 text-black border-black/10'
+                    : 'bg-white/10 text-slate-300 hover:bg-white/15 border-y border-r border-white/12'
+                  }`}
               >
                 <ChevronDown className="h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-52 bg-[#0e1022] border-white/10 text-slate-200 text-xs shadow-2xl"
+              className="w-52 rounded-2xl border-white/15 bg-[#18181a]/95 backdrop-blur-xl text-slate-200 text-xs shadow-2xl"
             >
               {workspace === 'product' ? (
                 <DropdownMenuItem
@@ -512,7 +499,7 @@ export function WorkspaceHeader({
                   className="flex items-center justify-between cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
-                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <Save className="h-3.5 w-3.5 text-white" />
                     <span>Save Product</span>
                   </div>
                   <kbd className="text-[10px] text-slate-400 font-mono">⌘S</kbd>
@@ -524,7 +511,7 @@ export function WorkspaceHeader({
                   className="flex items-center justify-between cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <div className="flex items-center gap-2">
-                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <Save className="h-3.5 w-3.5 text-white" />
                     <span>{hasActiveFile ? 'Save Active File' : 'Save Active File (No file open)'}</span>
                   </div>
                   <kbd className="text-[10px] text-slate-400 font-mono">⌘S</kbd>
@@ -537,7 +524,7 @@ export function WorkspaceHeader({
                   className="flex items-center justify-between cursor-pointer"
                 >
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="border-indigo-500/40 text-[9px] px-1 py-0 text-indigo-300">
+                    <Badge variant="pill" className="text-[9px] px-1.5 py-0 text-slate-200">
                       All
                     </Badge>
                     <span>Save Project</span>
@@ -562,12 +549,12 @@ export function WorkspaceHeader({
 
         {/* Credit Indicator */}
         <Link
-          href="/profile#credits"
-          className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-[11px] font-medium text-indigo-300 hover:bg-indigo-500/20 transition cursor-pointer"
-          title="Remaining AI Credits"
+          href={isAdmin ? "/profile#credits" : "/upgrade"}
+          className="hidden md:inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/12 bg-white/[0.05] text-[11px] font-medium text-slate-200 hover:bg-white/10 hover:border-white/20 transition cursor-pointer"
+          title={isAdmin ? "Unlimited AI Credits (Admin)" : `${creditsRemaining} of ${creditLimit} AI credits remaining`}
         >
           <Zap className="h-3 w-3 text-amber-400" />
-          <span>{creditsRemaining}/{creditLimit}</span>
+          <span>{isAdmin ? '∞ Unlimited' : `${creditsRemaining} / ${creditLimit} credits`}</span>
         </Link>
 
         <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />

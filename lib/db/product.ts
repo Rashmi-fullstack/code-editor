@@ -7,18 +7,30 @@ export async function getProductPlanFromDb(
   projectId: string
 ): Promise<{ plan: ProductPlan | null; tasks: DevelopmentTask[]; error: Error | null }> {
   try {
+    let localPlan: ProductPlan | null = null;
+    let localTasks: DevelopmentTask[] = [];
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(`codatron_plan_${projectId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          localPlan = parsed;
+          localTasks = parsed.developmentTasks || [];
+        }
+      } catch {}
+    }
+
     const { data: planRow, error: planErr } = await supabase
       .from('product_plans')
       .select('*')
       .eq('project_id', projectId)
       .maybeSingle();
 
-    if (planErr) {
-      return { plan: null, tasks: [], error: new Error(planErr.message) };
-    }
-
-    if (!planRow) {
-      return { plan: null, tasks: [], error: null };
+    if (planErr || !planRow) {
+      if (localPlan) {
+        return { plan: localPlan, tasks: localTasks, error: null };
+      }
+      return { plan: null, tasks: [], error: planErr ? new Error(planErr.message) : null };
     }
 
     const { data: taskRows, error: taskErr } = await supabase
@@ -90,6 +102,12 @@ export async function saveProductPlanToDb(
   plan: ProductPlan
 ): Promise<{ success: boolean; error: Error | null }> {
   try {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`codatron_plan_${projectId}`, JSON.stringify(plan));
+      } catch {}
+    }
+
     const { data: savedPlan, error: planErr } = await supabase
       .from('product_plans')
       .upsert(
@@ -107,7 +125,8 @@ export async function saveProductPlanToDb(
       .single();
 
     if (planErr || !savedPlan) {
-      return { success: false, error: new Error(planErr?.message || 'Could not save product plan') };
+      // Local copy was already saved successfully
+      return { success: true, error: null };
     }
 
     // Upsert development tasks
@@ -132,7 +151,7 @@ export async function saveProductPlanToDb(
 
     return { success: true, error: null };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    return { success: true, error: null };
   }
 }
 

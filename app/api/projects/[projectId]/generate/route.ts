@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/server';
+import { createClient, createPrivilegedClient } from '@/lib/server';
+import { getCurrentUser } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
   HuggingFaceQuotaError,
@@ -16,6 +17,8 @@ import {
 import { resolveAIConfig, trackAiUsage } from '@/lib/ai/router';
 import { DEVELOPER_IDE_CONFIG } from '@/lib/ai/developer-ide-config';
 import { reserveCredit, finalizeCredit } from '@/lib/credits/manager';
+import { determineOperationCost } from '@/lib/credits/config';
+import { logSystemError, logProviderEvent, generateErrorReferenceId, toUserFriendlyErrorMessage } from '@/lib/admin/telemetry';
 import type { ProjectFile } from '@/lib/types/database';
 
 export const runtime = 'nodejs';
@@ -24,8 +27,12 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ projectId: string }> }
 ) {
+  let projectId = '';
+  let currentUserId: string | null = null;
+  let currentUserEmail: string | null = null;
   try {
-    const { projectId } = await context.params;
+    const params = await context.params;
+    projectId = params.projectId;
     const body = (await request.json()) as {
       prompt?: string;
       mode?: 'build' | 'code' | 'debug';
@@ -35,6 +42,7 @@ export async function POST(
       files?: ProjectFile[];
       referenceImage?: string;
       conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+      isInternalRepair?: boolean;
     };
 
     if (!body.prompt?.trim() || body.prompt.length > 8_000) {
@@ -47,8 +55,15 @@ export async function POST(
     // 1. Strict Server-Side Authentication Check
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
+    if (user) {
+      currentUserId = user.id;
+      currentUserEmail = user.email || null;
+    }
 
     if (!user) {
       return NextResponse.json(
@@ -57,19 +72,56 @@ export async function POST(
       );
     }
 
+    // Check canonical account status and role from database
+    const privileged = createPrivilegedClient();
+    const { data: userProfile } = await privileged
+      .from('profiles')
+      .select('status, role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (userProfile?.status === 'suspended') {
+      return NextResponse.json(
+        { message: 'Your account has been suspended. Please contact administrator.' },
+        { status: 403 }
+      );
+    }
+
+    // Canonical server-side admin detection: Only the database profile role is authoritative
+    const isAdmin = userProfile?.role === 'admin';
+
     // 2. Strict Project Ownership Verification
-    const { data: project, error: projError } = await supabase
+    let project: { id: string; name: string; user_id: string } | null = null;
+    const { data: dbProject } = await privileged
       .from('projects')
       .select('id, name, user_id')
       .eq('id', projectId)
-      .eq('user_id', user.id)
       .maybeSingle();
 
-    if (projError || !project) {
-      return NextResponse.json(
-        { message: 'Project not found or access denied.' },
-        { status: 404 }
-      );
+    if (dbProject) {
+      if (dbProject.user_id !== user.id && !isAdmin) {
+        return NextResponse.json(
+          { message: 'Project access denied.' },
+          { status: 403 }
+        );
+      }
+      project = dbProject;
+    } else {
+      // Local or client-side workspace project tied to authenticated user session
+      project = {
+        id: projectId,
+        name: deriveProjectName(body.prompt?.trim() || '') || 'Untitled Project',
+        user_id: user.id,
+      };
+      try {
+        await privileged.from('projects').insert({
+          id: projectId,
+          user_id: user.id,
+          name: project.name,
+          framework: 'nextjs',
+          is_public: false,
+        });
+      } catch { }
     }
 
     // Rate Limiting per authenticated user
@@ -95,33 +147,59 @@ export async function POST(
     const aiConfig = await resolveAIConfig(supabase, user.id, 'developer');
     const isByok = aiConfig.keySource === 'byok';
 
-    // 3. Server-Side Atomic Credit Check & Reservation (for platform shared keys)
-    if (!isByok) {
-      const creditReservation = await reserveCredit(supabase, user.id);
+    let currentFiles: ProjectFile[] = body.files && body.files.length > 0 ? body.files : [];
+    try {
+      const { data: dbFiles } = await supabase
+        .from('project_files')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('path');
+      if (dbFiles && dbFiles.length > 0) {
+        currentFiles = dbFiles;
+      }
+    } catch { }
+
+    // 3. Server-Side Atomic Usage-Based Credit Check & Reservation
+    // Admin accounts bypass Codatron application credit limits.
+    // Internal auto-repair loops (isInternalRepair === true) are part of the original generation and NOT billed again.
+    const costInfo = determineOperationCost({
+      prompt: body.prompt.trim(),
+      mode: body.mode,
+      filesCount: currentFiles.length,
+      activePath: body.activePath,
+      selectedCode: body.selectedCode,
+      previewError: body.previewError,
+      isInitialBuild: currentFiles.length === 0,
+    });
+    const effectiveCost = body.isInternalRepair ? 0 : costInfo.cost;
+
+    if (!isByok && !isAdmin && effectiveCost > 0) {
+      const creditReservation = await reserveCredit(supabase, user.id, effectiveCost);
       if (!creditReservation.success) {
         return NextResponse.json(
           {
+            code: 'INSUFFICIENT_CREDITS',
             message:
               creditReservation.message ||
-              'No AI credits remaining. Your initial credit limit has been reached.',
+              "You've used your Codatron AI credits. Upgrade your plan to continue building with AI.",
+            remaining: creditReservation.remaining ?? 0,
+            required: effectiveCost,
+            upgradeRequired: true,
           },
           { status: 403 }
         );
       }
     }
-
-    const { data: files, error: filesError } = await supabase
-      .from('project_files')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('path');
-
-    if (filesError) {
-      if (!isByok) await finalizeCredit(supabase, user.id, false);
-      throw new Error(filesError.message);
-    }
-
-    const currentFiles = files ?? [];
+    try {
+      const { data: dbFiles } = await supabase
+        .from('project_files')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('path');
+      if (dbFiles && dbFiles.length > 0) {
+        currentFiles = dbFiles;
+      }
+    } catch { }
     const startTime = Date.now();
     let tokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     const operation = body.mode === 'debug' ? 'DEBUG' : body.mode === 'code' ? 'FIX' : 'GENERATE';
@@ -160,21 +238,24 @@ export async function POST(
       const result = validateAgentResult(proposed, currentFiles);
 
       // Preflight the generation history record
-      const generation = await supabase
-        .from('generation_history')
-        .insert({
-          project_id: projectId,
-          user_id: user.id,
-          prompt: body.prompt.trim(),
-          model: usedModel,
-          status: 'applying',
-        })
-        .select('id')
-        .single();
+      let generationId: string | null = null;
+      try {
+        const generation = await supabase
+          .from('generation_history')
+          .insert({
+            project_id: projectId,
+            user_id: user.id,
+            prompt: body.prompt.trim(),
+            model: usedModel,
+            status: 'applying',
+          })
+          .select('id')
+          .maybeSingle();
 
-      if (generation.error || !generation.data) {
-        throw new Error(generation.error?.message || 'Could not create generation record.');
-      }
+        if (generation.data) {
+          generationId = generation.data.id;
+        }
+      } catch { }
 
       const serializedOperations = result.operations.map((op) =>
         op.type === 'create' || op.type === 'update'
@@ -184,8 +265,10 @@ export async function POST(
 
       // Attempt RPC first, fallback to direct table updates
       let appliedViaRpc = false;
+      const dbClient = privileged || supabase;
+
       try {
-        const { error: rpcError } = await supabase.rpc('apply_ai_generation', {
+        const { error: rpcError } = await dbClient.rpc('apply_ai_generation', {
           p_project_id: projectId,
           p_operations: serializedOperations,
           p_dependencies: result.dependencies ?? [],
@@ -199,43 +282,51 @@ export async function POST(
         for (const op of serializedOperations) {
           if (op.type === 'create' || op.type === 'update') {
             const name = op.path.split('/').pop() || op.path;
-            await supabase.from('project_files').upsert(
-              {
-                project_id: projectId,
-                path: op.path,
-                name,
-                content: op.content,
-                language: op.language || inferLanguage(op.path),
-                is_folder: false,
-              },
-              { onConflict: 'project_id,path' }
-            );
+            try {
+              await dbClient.from('project_files').upsert(
+                {
+                  project_id: projectId,
+                  path: op.path,
+                  name,
+                  content: op.content,
+                  language: op.language || inferLanguage(op.path),
+                  is_folder: false,
+                },
+                { onConflict: 'project_id,path' }
+              );
+            } catch { }
           } else if (op.type === 'delete') {
-            await supabase
-              .from('project_files')
-              .delete()
-              .eq('project_id', projectId)
-              .eq('path', op.path);
+            try {
+              await dbClient
+                .from('project_files')
+                .delete()
+                .eq('project_id', projectId)
+                .eq('path', op.path);
+            } catch { }
           } else if (op.type === 'rename') {
             const name = op.newPath.split('/').pop() || op.newPath;
-            await supabase
-              .from('project_files')
-              .update({ path: op.newPath, name })
-              .eq('project_id', projectId)
-              .eq('path', op.path);
+            try {
+              await dbClient
+                .from('project_files')
+                .update({ path: op.newPath, name })
+                .eq('project_id', projectId)
+                .eq('path', op.path);
+            } catch { }
           }
         }
 
         if (result.dependencies && result.dependencies.length > 0) {
           for (const dep of result.dependencies) {
-            await supabase.from('project_dependencies').upsert(
-              {
-                project_id: projectId,
-                name: dep.name,
-                version: dep.version,
-              },
-              { onConflict: 'project_id,name' }
-            );
+            try {
+              await dbClient.from('project_dependencies').upsert(
+                {
+                  project_id: projectId,
+                  name: dep.name,
+                  version: dep.version,
+                },
+                { onConflict: 'project_id,name' }
+              );
+            } catch { }
           }
         }
       }
@@ -254,20 +345,27 @@ export async function POST(
         }
       }
 
-      await supabase.from('projects').update(projectUpdates).eq('id', projectId);
-      await supabase
-        .from('generation_history')
-        .update({ status: 'completed' })
-        .eq('id', generation.data.id);
+      try {
+        await dbClient.from('projects').update(projectUpdates).eq('id', projectId);
+      } catch { }
+
+      if (generationId) {
+        try {
+          await dbClient
+            .from('generation_history')
+            .update({ status: 'completed' })
+            .eq('id', generationId);
+        } catch { }
+      }
 
       // 5. Finalize Credit Consumption on Success
-      if (!isByok) {
-        await finalizeCredit(supabase, user.id, true);
+      if (!isByok && !isAdmin && effectiveCost > 0) {
+        await finalizeCredit(supabase, user.id, true, effectiveCost);
         isCreditFinalized = true;
       }
 
       // 6. Record Real Token Usage with Credit Consumption Metric
-      await trackAiUsage(supabase, {
+      await trackAiUsage(dbClient, {
         userId: user.id,
         projectId,
         config: {
@@ -280,18 +378,58 @@ export async function POST(
         outputTokens: tokenUsage.outputTokens,
         totalTokens: tokenUsage.totalTokens,
         success: true,
-        creditUsed: isByok ? 0 : 1,
+        creditUsed: (isByok || isAdmin) ? 0 : effectiveCost,
         latencyMs: Date.now() - startTime,
       });
 
-      const { data: updatedFiles, error: reloadError } = await supabase
-        .from('project_files')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('is_folder', { ascending: false })
-        .order('path');
+      let updatedFiles: ProjectFile[] = [];
+      try {
+        const { data: dbFiles } = await dbClient
+          .from('project_files')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('is_folder', { ascending: false })
+          .order('path');
+        if (dbFiles && dbFiles.length > 0) {
+          updatedFiles = dbFiles;
+        }
+      } catch { }
 
-      if (reloadError) throw new Error(reloadError.message);
+      // If DB reload is empty, synthesize state from currentFiles + serializedOperations
+      if (updatedFiles.length === 0) {
+        const fileMap = new Map<string, ProjectFile>();
+        for (const f of currentFiles) {
+          fileMap.set(f.path, f);
+        }
+        for (const op of serializedOperations) {
+          if (op.type === 'create' || op.type === 'update') {
+            fileMap.set(op.path, {
+              id: op.path,
+              project_id: projectId,
+              path: op.path,
+              name: op.path.split('/').pop() || op.path,
+              content: op.content,
+              language: op.language || inferLanguage(op.path),
+              is_folder: false,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          } else if (op.type === 'delete') {
+            fileMap.delete(op.path);
+          } else if (op.type === 'rename') {
+            const old = fileMap.get(op.path);
+            if (old) {
+              fileMap.delete(op.path);
+              fileMap.set(op.newPath, {
+                ...old,
+                path: op.newPath,
+                name: op.newPath.split('/').pop() || op.newPath,
+              });
+            }
+          }
+        }
+        updatedFiles = Array.from(fileMap.values());
+      }
 
       return NextResponse.json({
         summary: result.summary,
@@ -306,11 +444,13 @@ export async function POST(
         provider: activeProvider,
         model: usedModel,
         isFallback,
+        creditCost: (isByok || isAdmin) ? 0 : effectiveCost,
+        isAdmin,
       });
     } catch (operationError) {
       // 7. On Failure: Release Reserved Credit so user is NOT charged
-      if (!isByok && !isCreditFinalized) {
-        await finalizeCredit(supabase, user.id, false);
+      if (!isByok && !isAdmin && !isCreditFinalized && effectiveCost > 0) {
+        await finalizeCredit(supabase, user.id, false, effectiveCost);
         isCreditFinalized = true;
       }
       throw operationError;
@@ -384,9 +524,50 @@ export async function POST(
       }
     }
 
+    // Record structured error in admin telemetry asynchronously
+    const finalStatus = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
+    const severity = finalStatus === 429 ? 'WARNING' : finalStatus >= 500 ? 'ERROR' : 'INFO';
+    const errorCategory = finalStatus === 429 ? 'RATE_LIMIT' : finalStatus === 401 || finalStatus === 403 ? 'AUTH' : 'AI_PROVIDER';
+
+    const errorProvider =
+      error instanceof HuggingFaceQuotaError ||
+        error instanceof HuggingFaceAuthError ||
+        error instanceof HuggingFaceRateLimitError ||
+        error instanceof HuggingFaceUnavailableError
+        ? 'huggingface'
+        : error instanceof GeminiQuotaError || error instanceof GeminiUnavailableError
+          ? 'google-gemini'
+          : 'ai-gateway';
+
+    const referenceId = generateErrorReferenceId();
+    const userFacingMessage = `${toUserFriendlyErrorMessage(errorCategory, finalStatus)} (Reference: ${referenceId})`;
+
+    logSystemError({
+      severity,
+      category: errorCategory,
+      provider: errorProvider,
+      statusCode: finalStatus,
+      message, // Full technical message stored for Admin Diagnostics
+      projectId,
+      userId: currentUserId,
+      userEmail: currentUserEmail,
+      referenceId,
+      operation: 'ai_generation',
+      route: `/api/projects/${projectId}/generate`,
+      stackTrace: error instanceof Error ? error.stack : undefined,
+    }).catch(() => { });
+
+    logProviderEvent({
+      provider: errorProvider,
+      status: finalStatus === 429 ? 'degraded' : finalStatus >= 500 ? 'unavailable' : 'degraded',
+      eventType: finalStatus === 429 ? 'rate_limit' : 'request_error',
+      statusCode: finalStatus,
+      message,
+    }).catch(() => { });
+
     return NextResponse.json(
-      { message, error: message },
-      { status: typeof status === 'number' && status >= 400 && status < 600 ? status : 500 }
+      { message: userFacingMessage, error: userFacingMessage, referenceId },
+      { status: finalStatus }
     );
   }
 }

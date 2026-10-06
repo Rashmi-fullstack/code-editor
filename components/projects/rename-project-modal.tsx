@@ -99,69 +99,72 @@ function RenameForm({
         />
       </div>
 
-      <DialogFooter className="pt-2 gap-2 sm:gap-0">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onOpenChange(false)}
-          disabled={isSubmitting}
-          className="text-xs text-slate-400 hover:text-white hover:bg-white/5"
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={isSubmitting || !name.trim()}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-4 shadow-sm shadow-indigo-600/30 gap-1.5"
-        >
-          {isSubmitting ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>Saving…</span>
-            </>
-          ) : (
-            <span>Save Changes</span>
+        <DialogFooter className="pt-2 gap-2 sm:gap-0">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={isSubmitting}
+            className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={isSubmitting || !name.trim()}
+            className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md gap-1.5 transition cursor-pointer"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Saving…</span>
+              </>
+            ) : (
+              <span>Save Changes</span>
+            )}
+          </Button>
+        </DialogFooter>
+      </form>
+    );
+  }
+
+  export function RenameProjectModal({
+    open,
+    onOpenChange,
+    project,
+    onProjectUpdated,
+  }: RenameProjectModalProps) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[440px] rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-white shadow-2xl p-6 overflow-hidden">
+          {/* Top specular highlight line */}
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+          <DialogHeader className="space-y-1.5 text-left">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm overflow-hidden shrink-0">
+                <img src="/assets/logo.webp" alt="Codatron" className="h-4 w-4 object-contain" />
+              </span>
+              <DialogTitle className="text-base font-bold text-white tracking-tight">
+                Edit Project Details
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs text-slate-400">
+              Change the display name or description for this project.
+            </DialogDescription>
+          </DialogHeader>
+
+          {project && (
+            <RenameForm
+              key={project.id}
+              project={project}
+              onOpenChange={onOpenChange}
+              onProjectUpdated={onProjectUpdated}
+            />
           )}
-        </Button>
-      </DialogFooter>
-    </form>
-  );
-}
-
-export function RenameProjectModal({
-  open,
-  onOpenChange,
-  project,
-  onProjectUpdated,
-}: RenameProjectModalProps) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[440px] bg-[#0c0e1e] border-white/10 text-white shadow-2xl p-6">
-        <DialogHeader className="space-y-1.5 text-left">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30">
-              <Edit3 className="h-4 w-4" />
-            </span>
-            <DialogTitle className="text-base font-bold text-white tracking-tight">
-              Edit Project Details
-            </DialogTitle>
-          </div>
-          <DialogDescription className="text-xs text-slate-400">
-            Change the display name or description for this project.
-          </DialogDescription>
-        </DialogHeader>
-
-        {project && (
-          <RenameForm
-            key={project.id}
-            project={project}
-            onOpenChange={onOpenChange}
-            onProjectUpdated={onProjectUpdated}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
   );
 }

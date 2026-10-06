@@ -88,11 +88,14 @@ export function NewProjectModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[520px] bg-[#0c0e1e] border-white/10 text-white shadow-2xl p-6">
+      <DialogContent className="sm:max-w-[520px] rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-white shadow-2xl p-6 overflow-hidden">
+        {/* Top specular highlight line */}
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
         <DialogHeader className="space-y-1.5 text-left">
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30">
-              <Sparkles className="h-4 w-4" />
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm overflow-hidden shrink-0">
+              <img src="/assets/logo.webp" alt="Codatron" className="h-4 w-4 object-contain" />
             </span>
             <DialogTitle className="text-lg font-bold text-white tracking-tight">
               Create New Project
@@ -114,7 +117,7 @@ export function NewProjectModal({
               placeholder="e.g. AI Resume Builder"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-9 bg-black/40 border-white/10 text-xs text-white placeholder:text-slate-500 focus-visible:ring-indigo-500"
+              className="h-10 bg-white/[0.05] border-white/15 rounded-xl text-xs text-white placeholder:text-slate-500 focus-visible:ring-1 focus-visible:ring-white/20"
               autoFocus
               required
             />
@@ -131,7 +134,7 @@ export function NewProjectModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              className="resize-none bg-black/40 border-white/10 text-xs text-white placeholder:text-slate-500 focus-visible:ring-indigo-500"
+              className="resize-none bg-white/[0.05] border-white/15 rounded-xl text-xs text-white placeholder:text-slate-500 focus-visible:ring-1 focus-visible:ring-white/20"
             />
           </div>
 
@@ -145,14 +148,14 @@ export function NewProjectModal({
               <button
                 type="button"
                 onClick={() => setMode('product')}
-                className={`flex flex-col text-left p-3 rounded-xl border transition cursor-pointer ${
+                className={`flex flex-col text-left p-3.5 rounded-2xl border transition cursor-pointer ${
                   mode === 'product'
-                    ? 'border-indigo-500 bg-indigo-950/40 shadow-sm shadow-indigo-500/20'
+                    ? 'border-white/40 bg-white/[0.08] shadow-md'
                     : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <Compass className={`h-4 w-4 ${mode === 'product' ? 'text-indigo-400' : 'text-slate-400'}`} />
+                  <Compass className={`h-4 w-4 ${mode === 'product' ? 'text-white' : 'text-slate-400'}`} />
                   <span className="text-xs font-semibold text-white">Product Manager</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-tight">
@@ -164,14 +167,14 @@ export function NewProjectModal({
               <button
                 type="button"
                 onClick={() => setMode('developer')}
-                className={`flex flex-col text-left p-3 rounded-xl border transition cursor-pointer ${
+                className={`flex flex-col text-left p-3.5 rounded-2xl border transition cursor-pointer ${
                   mode === 'developer'
-                    ? 'border-indigo-500 bg-indigo-950/40 shadow-sm shadow-indigo-500/20'
+                    ? 'border-white/40 bg-white/[0.08] shadow-md'
                     : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <Code2 className={`h-4 w-4 ${mode === 'developer' ? 'text-indigo-400' : 'text-slate-400'}`} />
+                  <Code2 className={`h-4 w-4 ${mode === 'developer' ? 'text-white' : 'text-slate-400'}`} />
                   <span className="text-xs font-semibold text-white">Developer IDE</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-tight">
@@ -183,14 +186,14 @@ export function NewProjectModal({
               <button
                 type="button"
                 onClick={() => setMode('blank')}
-                className={`flex flex-col text-left p-3 rounded-xl border transition cursor-pointer ${
+                className={`flex flex-col text-left p-3.5 rounded-2xl border transition cursor-pointer ${
                   mode === 'blank'
-                    ? 'border-indigo-500 bg-indigo-950/40 shadow-sm shadow-indigo-500/20'
+                    ? 'border-white/40 bg-white/[0.08] shadow-md'
                     : 'border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <FileCode className={`h-4 w-4 ${mode === 'blank' ? 'text-indigo-400' : 'text-slate-400'}`} />
+                  <FileCode className={`h-4 w-4 ${mode === 'blank' ? 'text-white' : 'text-slate-400'}`} />
                   <span className="text-xs font-semibold text-white">Blank Project</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-tight">
@@ -207,7 +210,7 @@ export function NewProjectModal({
               size="sm"
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
-              className="text-xs text-slate-400 hover:text-white hover:bg-white/5"
+              className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
             >
               Cancel
             </Button>
@@ -215,7 +218,7 @@ export function NewProjectModal({
               type="submit"
               size="sm"
               disabled={isSubmitting || !name.trim()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-4 shadow-sm shadow-indigo-600/30 gap-1.5"
+              className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md gap-1.5 transition cursor-pointer"
             >
               {isSubmitting ? (
                 <>

@@ -9,6 +9,7 @@ import {
   Calendar,
   Key,
   Cpu,
+  Shield,
   ShieldCheck,
   Eye,
   EyeOff,
@@ -23,6 +24,13 @@ import {
   AlertTriangle,
   Coins,
   CheckCircle2,
+  CreditCard,
+  Tag,
+  Activity,
+  Users,
+  BarChart3,
+  ExternalLink,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,8 +81,13 @@ export default function ProfilePage() {
     creditsRemaining,
     creditLimit,
     creditsUsed,
+    isAdmin: contextIsAdmin,
     refreshCredits,
   } = useCredits();
+
+  // Authoritative server-verified admin state
+  const [serverIsAdmin, setServerIsAdmin] = useState<boolean | null>(null);
+  const effectiveIsAdmin = serverIsAdmin !== null ? serverIsAdmin : contextIsAdmin;
 
   // Profile data states
   const [aiConfig, setAiConfig] = useState<AiConfigState | null>(null);
@@ -108,13 +121,21 @@ export default function ProfilePage() {
 
     const fetchData = async () => {
       try {
-        const [configRes, usageRes, creditsRes] = await Promise.all([
+        const [configRes, usageRes, creditsRes, adminRes] = await Promise.all([
           fetch('/api/profile/ai-config', { cache: 'no-store' }),
           fetch('/api/profile/usage', { cache: 'no-store' }),
           fetch('/api/profile/credits', { cache: 'no-store' }),
+          fetch('/api/admin/me', { cache: 'no-store' }).catch(() => null),
         ]);
 
         if (ignore) return;
+
+        if (adminRes && adminRes.ok) {
+          const adminData = await adminRes.json();
+          if (!ignore) {
+            setServerIsAdmin(Boolean(adminData?.isAdmin));
+          }
+        }
 
         if (configRes.ok) {
           const configJson = (await configRes.json()) as AiConfigState;
@@ -135,6 +156,9 @@ export default function ProfilePage() {
         if (creditsRes.ok) {
           const creditsJson = await creditsRes.json();
           if (!ignore) {
+            if (serverIsAdmin === null) {
+              setServerIsAdmin(Boolean(creditsJson.isAdmin || creditsJson.isUnlimited));
+            }
             setAccountData({
               createdAt: creditsJson.createdAt || null,
               status: 'Active Account',
@@ -158,7 +182,7 @@ export default function ProfilePage() {
     return () => {
       ignore = true;
     };
-  }, [authLoading, user, router, refreshKey, refreshCredits]);
+  }, [authLoading, user, router, refreshKey, refreshCredits, serverIsAdmin]);
 
   const handleSaveApiKey = async () => {
     if (!inputApiKey.trim()) {
@@ -272,46 +296,61 @@ export default function ProfilePage() {
   );
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-[#02060f] text-slate-100 select-none">
+    <div className="relative min-h-screen w-full flex flex-col bg-black text-white selection:bg-white/20 select-none overflow-x-hidden">
+      {/* Background ambient atmosphere */}
+      <div className="fixed inset-0 pointer-events-none z-0">
+        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-gradient-to-b from-indigo-500/10 via-purple-500/5 to-transparent blur-[120px] rounded-full" />
+      </div>
+
       {/* ========================================================================= */}
       {/* TOP NAVBAR */}
       {/* ========================================================================= */}
-      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/10 bg-[#060a12]/90 px-4 sm:px-6 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/12 bg-black/60 px-4 sm:px-6 backdrop-blur-xl">
         <div className="flex items-center gap-3">
           <Link
             href="/projects"
-            className="flex items-center gap-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition py-1 px-2 hover:bg-white/5"
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-[#28282a] px-3 py-1 text-xs font-medium text-white hover:bg-[#323236] transition"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Projects</span>
           </Link>
 
-          <div className="h-4 w-px bg-white/10" />
+          <div className="h-4 w-px bg-white/12" />
 
-          <Link href="/" className="flex items-center gap-2 font-bold text-white text-sm">
-            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm shadow-indigo-500/20">
-              <Sparkles className="h-3.5 w-3.5 text-white" />
+          <Link href="/" className="flex items-center gap-2.5 font-bold text-white text-sm hover:opacity-85 transition">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm overflow-hidden p-0.5">
+              <img src="/assets/logo.webp" alt="Codatron.ai" className="h-full w-full object-contain" />
             </span>
-            <span>Codatron.ai</span>
+            <span className="tracking-tight">Codatron.ai</span>
           </Link>
 
-          <span className="text-slate-600">/</span>
+          <span className="text-white/30">/</span>
           <span className="text-xs font-semibold text-slate-300">Profile & AI Settings</span>
         </div>
 
         <div className="flex items-center gap-3">
           {/* Header Credit Indicator */}
-          <Link
-            href="#credits"
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-xs font-medium text-indigo-300 hover:bg-indigo-500/20 transition cursor-pointer"
-            title="Remaining Application Credits"
-          >
-            <Coins className="h-3.5 w-3.5 text-indigo-400" />
-            <span>{creditsRemaining} / {creditLimit} credits</span>
-          </Link>
+          {effectiveIsAdmin ? (
+            <div
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-xs font-semibold text-amber-300"
+              title="Administrator: Unlimited Application Credits"
+            >
+              <Zap className="h-3.5 w-3.5 text-amber-400" />
+              <span>∞ Unlimited Credits</span>
+            </div>
+          ) : (
+            <Link
+              href="#credits"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/12 bg-[#28282a] text-xs font-medium text-slate-300 hover:text-white hover:border-white/20 transition cursor-pointer"
+              title="Remaining Application Credits"
+            >
+              <Coins className="h-3.5 w-3.5 text-amber-400" />
+              <span>{creditsRemaining} / {creditLimit} credits</span>
+            </Link>
+          )}
 
           <WorkspaceSwitcher className="hidden sm:inline-flex" />
-          <div className="h-4 w-px bg-white/10 hidden sm:block" />
+          <div className="h-4 w-px bg-white/12 hidden sm:block" />
           <GlobalUserMenu showTriggerLabel={true} />
         </div>
       </header>
@@ -319,35 +358,52 @@ export default function ProfilePage() {
       {/* ========================================================================= */}
       {/* MAIN PROFILE DASHBOARD */}
       {/* ========================================================================= */}
-      <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full space-y-8">
+      <main className="relative z-10 flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full space-y-8">
         {/* ======================================================================= */}
         {/* SECTION 1: PROFILE INFORMATION */}
         {/* ======================================================================= */}
         <section id="profile-info" className="space-y-4">
-          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-r from-indigo-950/40 via-[#0c0e24] to-purple-950/30 p-6 sm:p-8 shadow-xl">
+          <div className={`relative overflow-hidden rounded-[28px] border ${effectiveIsAdmin ? 'border-emerald-500/30 shadow-emerald-950/20' : 'border-white/12'} bg-black/40 backdrop-blur-xl p-6 sm:p-8 shadow-2xl`}>
+            {/* Top specular highlight line */}
+            <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent ${effectiveIsAdmin ? 'via-emerald-500/40' : 'via-white/20'} to-transparent pointer-events-none`} />
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 relative z-10">
               <div className="flex items-center gap-4 sm:gap-5">
-                <Avatar className="h-16 w-16 sm:h-20 sm:w-20 border-2 border-indigo-500/40 bg-indigo-950/80 shadow-2xl">
-                  <AvatarFallback className="text-xl sm:text-2xl font-bold text-indigo-300 bg-transparent">
-                    {user?.name ? user.name.slice(0, 2).toUpperCase() : 'ME'}
+                <Avatar className={`h-16 w-16 sm:h-20 sm:w-20 border-2 ${effectiveIsAdmin ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-white/20 bg-white/10'} shadow-2xl rounded-full`}>
+                  <AvatarFallback className={`text-xl sm:text-2xl font-bold ${effectiveIsAdmin ? 'text-emerald-300' : 'text-white'} bg-transparent`}>
+                    {effectiveIsAdmin ? 'AD' : user?.name ? user.name.slice(0, 2).toUpperCase() : 'ME'}
                   </AvatarFallback>
                 </Avatar>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                      {user?.name || 'Local Developer'}
+                      {effectiveIsAdmin ? 'Administrator' : user?.name || 'Local Developer'}
                     </h1>
                     <Badge
                       variant="outline"
-                      className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono flex items-center gap-1"
+                      className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono flex items-center gap-1 px-2.5 py-0.5"
                     >
                       <CheckCircle2 className="h-3 w-3 text-emerald-400" />
                       <span>{accountData.status}</span>
                     </Badge>
+                    {effectiveIsAdmin && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-full border-indigo-500/40 bg-indigo-500/15 text-indigo-300 text-[10px] font-mono flex items-center gap-1 px-2.5 py-0.5"
+                      >
+                        <Shield className="h-3 w-3 text-indigo-400" />
+                        <span>Control Plane</span>
+                      </Badge>
+                    )}
                   </div>
+                  <p className="text-xs text-slate-300">
+                    {effectiveIsAdmin
+                      ? 'Administrator Control Center • Codatron Platform Administration'
+                      : 'Developer Workspace & Account'}
+                  </p>
                   <p className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
                     <Mail className="h-3 w-3 text-slate-500" />
-                    <span>{user?.email || 'local@codatron.ai'}</span>
+                    <span>{user?.email || 'admin@codatron.ai'}</span>
                   </p>
                   <p className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
                     <Calendar className="h-3 w-3 text-slate-600" />
@@ -356,12 +412,23 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {/* Quick Workspace launch buttons */}
-              <div className="flex items-center gap-2">
+              {/* Action buttons */}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {effectiveIsAdmin && (
+                  <Link href="/admin">
+                    <Button
+                      size="sm"
+                      className="rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs px-4 py-2 gap-1.5 shadow-lg shadow-emerald-500/20 transition"
+                    >
+                      <Shield className="h-3.5 w-3.5 text-black" />
+                      <span>Open Admin Portal</span>
+                    </Button>
+                  </Link>
+                )}
                 <Link href="/editor?view=developer">
                   <Button
                     size="sm"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold gap-1.5 shadow-sm shadow-indigo-600/30"
+                    className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-4 py-2 gap-1.5 shadow-sm transition"
                   >
                     <Code2 className="h-3.5 w-3.5" />
                     <span>Open IDE</span>
@@ -371,7 +438,7 @@ export default function ProfilePage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-white/10 bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-medium gap-1.5"
+                    className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs font-medium px-4 py-2 gap-1.5 transition"
                   >
                     <Compass className="h-3.5 w-3.5 text-purple-400" />
                     <span>Product Manager</span>
@@ -383,142 +450,491 @@ export default function ProfilePage() {
         </section>
 
         {/* ======================================================================= */}
-        {/* SECTION 2: AI CREDITS & USAGE */}
+        {/* SECTION 2: AI CREDITS & USAGE (ADMIN VS NORMAL USER) */}
         {/* ======================================================================= */}
-        <section id="credits" className="space-y-4">
-          <div className="flex items-center justify-between border-b border-white/10 pb-3">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                <Coins className="h-4 w-4 text-amber-400" />
-                <span>AI Credits & Usage</span>
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Application-level allowance for autonomous code generation, planning, and debugging.
-              </p>
-            </div>
-            <Badge
-              variant="outline"
-              className={
-                creditsRemaining > 0
-                  ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px]'
-                  : 'border-red-500/30 bg-red-500/10 text-red-300 text-[10px]'
-              }
-            >
-              {creditsRemaining > 0 ? `${creditsRemaining} credits left` : 'Credits Exhausted'}
-            </Badge>
-          </div>
-
-          {/* Credit Allowance Card */}
-          <Card className="bg-[#0b0d1e] border-white/10 p-5 rounded-2xl shadow-xl space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {effectiveIsAdmin ? (
+          /* ===================================================================== */
+          /* ADMINISTRATOR CREDIT & PROVIDER CONSUMPTION EXPERIENCE                */
+          /* ===================================================================== */
+          <section id="credits" className="space-y-6">
+            <div className="flex items-center justify-between border-b border-white/12 pb-3">
               <div>
-                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Codatron AI Allowance
-                </span>
-                <div className="flex items-baseline gap-2 pt-1">
-                  <span className="text-3xl font-extrabold text-white tracking-tight">
-                    {creditsRemaining} / {creditLimit}
+                <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <Coins className="h-4 w-4 text-amber-400" />
+                  <span>Codatron AI Allowance & Provider Tracking</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Application credits are unlimited for Administrator. External AI provider consumption is tracked separately below.
+                </p>
+              </div>
+              <Badge
+                variant="outline"
+                className="rounded-full border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs px-3 py-1 font-bold"
+              >
+                ∞ Unlimited Credits
+              </Badge>
+            </div>
+
+            {/* Allowance & Providers Split Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Card 1: Codatron AI Allowance */}
+              <Card className="rounded-[24px] border border-amber-500/20 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500/30 to-transparent pointer-events-none" />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
+                      Codatron AI Allowance
+                    </span>
+                    <Badge className="border-amber-500/30 bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0">
+                      Unrestricted
+                    </Badge>
+                  </div>
+                  <div className="flex items-baseline gap-2 pt-1">
+                    <span className="text-3xl font-extrabold text-white tracking-tight">
+                      ∞ Unlimited
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed pt-1">
+                    Application credit restriction is <strong>Disabled for Administrator</strong>. Autonomous multi-file synthesis and repair execute without quota limits.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between">
+                  <span>Application Credit Restriction:</span>
+                  <span className="text-emerald-400 font-semibold font-mono">Bypassed</span>
+                </div>
+              </Card>
+
+              {/* Card 2: Google Gemini Consumption */}
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Google Gemini Usage
+                    </span>
+                    <Badge variant="outline" className="border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px]">
+                      External API
+                    </Badge>
+                  </div>
+                  <div className="flex items-baseline gap-2 pt-1">
+                    <span className="text-3xl font-extrabold text-white tracking-tight">
+                      {formatNumber(usage?.totalTokens)}
+                    </span>
+                    <span className="text-xs text-slate-400">tokens used</span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed pt-1">
+                    Direct token throughput to Google Gemini models. Upstream API rate limits and Google Cloud quotas apply.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between font-mono">
+                  <span>Requests: {usage?.totalRequests ?? 0}</span>
+                  <span className="text-indigo-400">Tokens: {formatNumber(usage?.totalTokens)}</span>
+                </div>
+              </Card>
+
+              {/* Card 3: Hugging Face Fallback / Provider */}
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                      Hugging Face Provider
+                    </span>
+                    <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-300 text-[10px]">
+                      Inference API
+                    </Badge>
+                  </div>
+                  <div className="flex items-baseline gap-2 pt-1">
+                    <span className="text-3xl font-extrabold text-white tracking-tight">
+                      Operational
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed pt-1">
+                    Hugging Face inference endpoints with automatic fallback routing. Telemetry logged to Admin Diagnostics.
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between font-mono">
+                  <span>Status: Connected</span>
+                  <span className="text-purple-400">Telemetry Active</span>
+                </div>
+              </Card>
+            </div>
+
+            {/* =================================================================== */}
+            {/* ADMINISTRATOR CONTROL CENTER HUB (STEP 3 REQUIREMENT)               */}
+            {/* =================================================================== */}
+            <div className="space-y-4 pt-4">
+              <div className="flex items-center justify-between border-b border-white/12 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <ShieldCheck className="h-5 w-5 text-emerald-400" />
+                    <span>Administrator Control Center</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Codatron Platform Administration — select a control module to manage the platform.
+                  </p>
+                </div>
+                <Link href="/admin">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-xl border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs gap-1.5"
+                  >
+                    <span>Full Portal</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
+                  </Button>
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. ADMIN OVERVIEW */}
+                <Link href="/admin" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-emerald-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                          <Activity className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-emerald-300 transition">
+                        ADMIN OVERVIEW
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Platform status, key metrics, and operational health.
+                      </p>
+                    </div>
+                    <span className="text-xs text-emerald-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Launch Overview →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 2. AI PROVIDERS */}
+                <Link href="/admin/providers" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-purple-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                          <Cpu className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-purple-300 transition">
+                        AI PROVIDERS
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Provider configuration, Gemini & Hugging Face health.
+                      </p>
+                    </div>
+                    <span className="text-xs text-purple-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Configure Providers →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 3. PLANS & BILLING */}
+                <Link href="/admin/plans" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-indigo-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                          <CreditCard className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-indigo-300 transition">
+                        PLANS & BILLING
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Plans, pricing in INR, and billing configuration.
+                      </p>
+                    </div>
+                    <span className="text-xs text-indigo-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Manage Plans →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 4. COUPONS */}
+                <Link href="/admin/coupons" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-amber-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                          <Tag className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-amber-300 transition">
+                        COUPONS
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Promotional coupon codes and discount management.
+                      </p>
+                    </div>
+                    <span className="text-xs text-amber-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Manage Coupons →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 5. USAGE & LIMITS */}
+                <Link href="/admin/ai-usage" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-blue-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                          <BarChart3 className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-blue-300 transition">
+                        USAGE & LIMITS
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Platform-wide generation usage and provider metrics.
+                      </p>
+                    </div>
+                    <span className="text-xs text-blue-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      View Usage →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 6. USER MANAGEMENT */}
+                <Link href="/admin/users" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-emerald-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                          <Users className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-emerald-300 transition">
+                        USER MANAGEMENT
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Users, accounts, credits and activity control.
+                      </p>
+                    </div>
+                    <span className="text-xs text-emerald-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Manage Users →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 7. ERRORS & DIAGNOSTICS */}
+                <Link href="/admin/errors" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-red-500/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
+                          <AlertTriangle className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-red-300 transition">
+                        ERRORS & DIAGNOSTICS
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Application, provider errors and correlation IDs.
+                      </p>
+                    </div>
+                    <span className="text-xs text-red-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Inspect Diagnostics →
+                    </span>
+                  </Card>
+                </Link>
+
+                {/* 8. SECURITY */}
+                <Link href="/admin/settings" className="group">
+                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-zinc-400/30 hover:bg-[#16161a] transition cursor-pointer">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="h-9 w-9 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white">
+                          <ShieldCheck className="h-4 w-4" />
+                        </div>
+                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-white group-hover:text-white transition">
+                        SECURITY & SETTINGS
+                      </h4>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Admin settings, maintenance mode, and audit logs.
+                      </p>
+                    </div>
+                    <span className="text-xs text-zinc-300 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
+                      Admin Settings →
+                    </span>
+                  </Card>
+                </Link>
+              </div>
+            </div>
+          </section>
+        ) : (
+          /* ===================================================================== */
+          /* NORMAL USER CREDIT ALLOWANCE & PROGRESS BAR PRESENTATION              */
+          /* ===================================================================== */
+          <section id="credits" className="space-y-4">
+            <div className="flex items-center justify-between border-b border-white/12 pb-3">
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <Coins className="h-4 w-4 text-amber-400" />
+                  <span>AI Credits & Usage</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Application-level allowance for autonomous code generation, planning, and debugging.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link href="/upgrade">
+                  <Button
+                    size="sm"
+                    className="h-7 px-3 text-xs font-semibold rounded-full bg-indigo-600 hover:bg-indigo-500 text-white gap-1 transition"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    <span>View Plans</span>
+                  </Button>
+                </Link>
+                <Badge
+                  variant="outline"
+                  className={
+                    creditsRemaining > 10
+                      ? 'rounded-full border-white/15 bg-white/10 text-white text-[10px] px-3 py-0.5'
+                      : creditsRemaining > 0
+                        ? 'rounded-full border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] px-3 py-0.5'
+                        : 'rounded-full border-red-500/30 bg-red-500/10 text-red-300 text-[10px] px-3 py-0.5'
+                  }
+                >
+                  {creditsRemaining > 0
+                    ? `${creditsRemaining} credits left`
+                    : 'Credits Exhausted'}
+                </Badge>
+              </div>
+            </div>
+
+            {/* Credit Allowance Card */}
+            <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden space-y-5">
+              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Codatron AI Allowance
                   </span>
-                  <span className="text-xs text-slate-400 font-medium">
-                    {creditsRemaining} {creditsRemaining === 1 ? 'credit' : 'credits'} remaining
+                  <div className="flex items-baseline gap-2 pt-1">
+                    <span className="text-3xl font-extrabold text-white tracking-tight">
+                      {creditsRemaining} / {creditLimit}
+                    </span>
+                    <span className="text-xs text-slate-400 font-medium">
+                      {creditsRemaining} {creditsRemaining === 1 ? 'credit' : 'credits'} remaining
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-left sm:text-right">
+                  <span className="text-xs text-slate-400">Total Consumed:</span>
+                  <span className="ml-1.5 text-xs font-bold text-white">
+                    {creditsUsed} {creditsUsed === 1 ? 'credit' : 'credits'}
                   </span>
                 </div>
               </div>
 
-              <div className="text-left sm:text-right">
-                <span className="text-xs text-slate-400">Total Consumed:</span>
-                <span className="ml-1.5 text-xs font-bold text-indigo-300">
-                  {creditsUsed} {creditsUsed === 1 ? 'credit' : 'credits'}
-                </span>
-              </div>
-            </div>
-
-            {/* Custom Visual Progress Bar */}
-            <div className="space-y-1.5">
-              <div className="w-full bg-white/5 border border-white/10 rounded-full h-3 overflow-hidden p-0.5 shadow-inner">
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    creditsRemaining > 1
+              {/* Custom Visual Progress Bar */}
+              <div className="space-y-1.5">
+                <div className="w-full bg-white/5 border border-white/10 rounded-full h-3 overflow-hidden p-0.5 shadow-inner">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${creditsRemaining > 25
                       ? 'bg-gradient-to-r from-indigo-500 to-purple-500 shadow-sm shadow-indigo-500/50'
-                      : creditsRemaining === 1
-                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 shadow-sm shadow-amber-500/50'
-                      : 'bg-red-500/50'
-                  }`}
-                  style={{ width: `${creditPercentage}%` }}
-                />
+                      : creditsRemaining > 10
+                        ? 'bg-gradient-to-r from-amber-500 to-orange-500 shadow-sm shadow-amber-500/50'
+                        : 'bg-red-500/70 shadow-sm shadow-red-500/50'
+                      }`}
+                    style={{ width: `${creditPercentage}%` }}
+                  />
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
+                  <span>0 Credits</span>
+                  <span>{creditPercentage}% Available</span>
+                  <span>{creditLimit} Max Allowance</span>
+                </div>
               </div>
-              <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
-                <span>0 Credits</span>
-                <span>{creditPercentage}% Available</span>
-                <span>{creditLimit} Max Allowance</span>
-              </div>
+
+              {creditsRemaining === 0 && (
+                <div className="rounded-2xl bg-red-950/30 border border-red-500/20 p-3.5 flex items-center justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-200 leading-relaxed">
+                      <strong>No AI credits remaining.</strong> You have used your Codatron AI credits. Upgrade to continue building with AI.
+                    </p>
+                  </div>
+                  <Link href="/upgrade">
+                    <Button size="sm" className="rounded-full bg-white text-black hover:bg-slate-200 text-xs font-semibold px-3 py-1 shrink-0">
+                      Upgrade
+                    </Button>
+                  </Link>
+                </div>
+              )}
+            </Card>
+
+            {/* Provider Tokens Stat Cards Grid */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <Card className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-5 space-y-1 shadow-lg">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Total Requests
+                </span>
+                <div className="text-2xl font-bold text-white tracking-tight">
+                  {usage?.totalRequests.toLocaleString() ?? 0}
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-400 pt-1">
+                  <span>Platform: {usage?.platformRequests ?? 0}</span>
+                  <span>•</span>
+                  <span className="text-indigo-400">BYOK: {usage?.byokRequests ?? 0}</span>
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-5 space-y-1 shadow-lg">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Total Tokens
+                </span>
+                <div className="text-2xl font-bold text-white tracking-tight">
+                  {formatNumber(usage?.totalTokens)}
+                </div>
+                <div className="text-[10px] text-slate-400 pt-1">
+                  Actual Gemini provider usage
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-5 space-y-1 shadow-lg">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Input Tokens
+                </span>
+                <div className="text-2xl font-bold text-slate-200 tracking-tight">
+                  {formatNumber(usage?.inputTokens)}
+                </div>
+                <div className="text-[10px] text-slate-400 pt-1">
+                  Prompts & workspace context
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-5 space-y-1 shadow-lg">
+                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Output Tokens
+                </span>
+                <div className="text-2xl font-bold text-emerald-400 tracking-tight">
+                  {formatNumber(usage?.outputTokens)}
+                </div>
+                <div className="text-[10px] text-slate-400 pt-1">
+                  Generated code & specifications
+                </div>
+              </Card>
             </div>
 
-            {creditsRemaining === 0 && (
-              <div className="rounded-xl bg-red-950/30 border border-red-500/20 p-3 flex items-start gap-2.5">
-                <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-red-200 leading-relaxed">
-                  <strong>No AI credits remaining.</strong> You have reached the initial limit of {creditLimit} credits. Further AI operations will be restricted until quota is adjusted.
-                </p>
-              </div>
-            )}
-          </Card>
-
-          {/* Provider Tokens Stat Cards Grid */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            <Card className="bg-[#0b0d1e] border-white/10 p-4 rounded-xl space-y-1 shadow-lg">
-              <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                Total Requests
-              </span>
-              <div className="text-2xl font-bold text-white tracking-tight">
-                {usage?.totalRequests.toLocaleString() ?? 0}
-              </div>
-              <div className="flex items-center gap-2 text-[10px] text-slate-500 pt-1">
-                <span>Platform: {usage?.platformRequests ?? 0}</span>
-                <span>•</span>
-                <span className="text-indigo-400">BYOK: {usage?.byokRequests ?? 0}</span>
-              </div>
-            </Card>
-
-            <Card className="bg-[#0b0d1e] border-white/10 p-4 rounded-xl space-y-1 shadow-lg">
-              <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                Total Tokens
-              </span>
-              <div className="text-2xl font-bold text-indigo-300 tracking-tight">
-                {formatNumber(usage?.totalTokens)}
-              </div>
-              <div className="text-[10px] text-slate-500 pt-1">
-                Actual Gemini provider usage
-              </div>
-            </Card>
-
-            <Card className="bg-[#0b0d1e] border-white/10 p-4 rounded-xl space-y-1 shadow-lg">
-              <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                Input Tokens
-              </span>
-              <div className="text-2xl font-bold text-slate-200 tracking-tight">
-                {formatNumber(usage?.inputTokens)}
-              </div>
-              <div className="text-[10px] text-slate-500 pt-1">
-                Prompts & workspace context
-              </div>
-            </Card>
-
-            <Card className="bg-[#0b0d1e] border-white/10 p-4 rounded-xl space-y-1 shadow-lg">
-              <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                Output Tokens
-              </span>
-              <div className="text-2xl font-bold text-emerald-400 tracking-tight">
-                {formatNumber(usage?.outputTokens)}
-              </div>
-              <div className="text-[10px] text-slate-500 pt-1">
-                Generated code & specifications
-              </div>
-            </Card>
-          </div>
-
-          {/* Operations Breakdown */}
-          <div className="rounded-xl border border-white/10 bg-[#0a0c1e] p-5 space-y-4">
+            {/* Operations Breakdown */}
+            <div className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-4 shadow-lg">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Layers className="h-3.5 w-3.5 text-indigo-400" />
@@ -530,10 +946,10 @@ export default function ProfilePage() {
             </div>
 
             {!usage || usage.totalRequests === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
-                <Zap className="h-6 w-6 text-slate-600" />
-                <p className="font-medium text-slate-400">No AI operations executed yet.</p>
-                <p className="text-[11px] text-slate-600 max-w-sm">
+              <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                <Zap className="h-6 w-6 text-slate-500" />
+                <p className="font-medium text-slate-300">No AI operations executed yet.</p>
+                <p className="text-[11px] text-slate-500 max-w-sm">
                   Run builds, product plans, or code modifications in the IDE to track real token metrics and credit consumption.
                 </p>
               </div>
@@ -544,7 +960,7 @@ export default function ProfilePage() {
                   return (
                     <div
                       key={op}
-                      className="rounded-lg border border-white/5 bg-white/[0.02] p-3 space-y-1"
+                      className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-1 hover:border-white/20 transition"
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-semibold text-slate-400 font-mono">
@@ -565,12 +981,13 @@ export default function ProfilePage() {
             )}
           </div>
         </section>
+      )}
 
         {/* ======================================================================= */}
         {/* SECTION 3: AI PROVIDER & BYOK */}
         {/* ======================================================================= */}
         <section id="ai-config" className="space-y-4">
-          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center justify-between border-b border-white/12 pb-3">
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-purple-400" />
@@ -583,11 +1000,10 @@ export default function ProfilePage() {
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-medium">Source:</span>
               <Badge
-                className={`text-[10px] font-semibold px-2 py-0.5 ${
-                  aiConfig?.keySource === 'byok'
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                    : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
-                }`}
+                className={`rounded-full text-[10px] font-semibold px-3 py-0.5 border ${aiConfig?.keySource === 'byok'
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-white/10 text-white border-white/15'
+                  }`}
               >
                 {aiConfig?.keySource === 'byok' ? 'Personal Key (BYOK)' : 'Codatron Platform Key'}
               </Badge>
@@ -597,7 +1013,9 @@ export default function ProfilePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left: Active Configuration Card */}
             <div className="lg:col-span-1 space-y-4">
-              <Card className="bg-[#0a0c1e] border-white/10 p-5 rounded-2xl space-y-4 shadow-xl">
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-4 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
                 <div className="space-y-1">
                   <h3 className="text-sm font-semibold text-white">Current AI Stack</h3>
                   <p className="text-xs text-slate-400">
@@ -617,7 +1035,7 @@ export default function ProfilePage() {
 
                   <div className="flex justify-between items-center py-2 border-b border-white/5">
                     <span className="text-slate-400">Model</span>
-                    <span className="font-mono text-indigo-300">
+                    <span className="font-mono text-purple-300">
                       {aiConfig?.model || DEVELOPER_IDE_CONFIG.model}
                     </span>
                   </div>
@@ -632,16 +1050,16 @@ export default function ProfilePage() {
                   {aiConfig?.keyConfigured && aiConfig.maskedKey && (
                     <div className="flex justify-between items-center py-2 border-b border-white/5">
                       <span className="text-slate-400">Stored Key</span>
-                      <span className="font-mono text-slate-300 text-[11px] bg-black/40 px-2 py-0.5 rounded border border-white/5">
+                      <span className="font-mono text-slate-300 text-[11px] bg-white/[0.05] px-2.5 py-0.5 rounded-full border border-white/10">
                         {aiConfig.maskedKey}
                       </span>
                     </div>
                   )}
                 </div>
 
-                <div className="rounded-xl bg-indigo-950/30 border border-indigo-500/20 p-3 flex items-start gap-2.5">
-                  <ShieldCheck className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-3.5 flex items-start gap-2.5">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
                     Personal keys are encrypted with AES-256-GCM server-side. They are never sent to the browser or stored in localStorage. Note: BYOK changes provider credentials; application credit limits still apply.
                   </p>
                 </div>
@@ -650,7 +1068,9 @@ export default function ProfilePage() {
 
             {/* Right: Key Management Form */}
             <div className="lg:col-span-2 space-y-4">
-              <Card className="bg-[#0a0c1e] border-white/10 p-6 rounded-2xl space-y-5 shadow-xl">
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-5 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
                 <div className="space-y-1">
                   <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                     <Key className="h-4 w-4 text-amber-400" />
@@ -677,10 +1097,10 @@ export default function ProfilePage() {
                         }
                       }}
                     >
-                      <SelectTrigger className="bg-black/40 border-white/10 text-xs">
+                      <SelectTrigger className="rounded-xl bg-white/[0.05] border-white/12 text-xs text-white hover:border-white/20 focus:border-white/30">
                         <SelectValue placeholder="Select Provider" />
                       </SelectTrigger>
-                      <SelectContent className="bg-[#0e1022] border-white/10 text-slate-200 text-xs">
+                      <SelectContent className="bg-[#18181a] border-white/12 text-slate-200 text-xs rounded-xl shadow-2xl">
                         <SelectItem value="huggingface">Hugging Face (Inference Providers)</SelectItem>
                         <SelectItem value="google-gemini">Google Gemini</SelectItem>
                         <SelectItem value="openai" disabled>OpenAI (Coming Soon)</SelectItem>
@@ -697,10 +1117,10 @@ export default function ProfilePage() {
                       value={selectedModel}
                       onValueChange={setSelectedModel}
                     >
-                      <SelectTrigger className="bg-black/40 border-white/10 text-xs">
+                      <SelectTrigger className="rounded-xl bg-white/[0.05] border-white/12 text-xs text-white hover:border-white/20 focus:border-white/30">
                         <SelectValue placeholder="Select Model" />
                       </SelectTrigger>
-                      <SelectContent className="bg-[#0e1022] border-white/10 text-slate-200 text-xs">
+                      <SelectContent className="bg-[#18181a] border-white/12 text-slate-200 text-xs rounded-xl shadow-2xl">
                         {selectedProvider === 'huggingface' ? (
                           <SelectItem value="Qwen/Qwen3-Coder-480B-A35B-Instruct">
                             Qwen3-Coder-480B-A35B-Instruct (Primary)
@@ -728,7 +1148,7 @@ export default function ProfilePage() {
                         href="https://huggingface.co/settings/tokens"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[11px] text-indigo-400 hover:underline flex items-center gap-1"
+                        className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
                       >
                         <span>Get Hugging Face Token</span>
                         <span>&rarr;</span>
@@ -738,7 +1158,7 @@ export default function ProfilePage() {
                         href="https://aistudio.google.com/app/apikey"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[11px] text-indigo-400 hover:underline flex items-center gap-1"
+                        className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
                       >
                         <span>Get Gemini API Key</span>
                         <span>&rarr;</span>
@@ -756,12 +1176,12 @@ export default function ProfilePage() {
                       }
                       value={inputApiKey}
                       onChange={(e) => setInputApiKey(e.target.value)}
-                      className="bg-black/40 border-white/10 text-xs font-mono pr-10"
+                      className="rounded-xl bg-white/[0.05] border-white/12 text-xs font-mono pr-10 text-white focus:border-white/30"
                     />
                     <button
                       type="button"
                       onClick={() => setShowKeyText((prev) => !prev)}
-                      className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300 transition cursor-pointer"
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white transition cursor-pointer"
                       title={showKeyText ? 'Hide API Key' : 'Show API Key'}
                     >
                       {showKeyText ? (
@@ -774,13 +1194,13 @@ export default function ProfilePage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-white/5">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-white/5">
+                  <div className="flex items-center gap-2.5">
                     <Button
                       size="sm"
                       onClick={() => void handleSaveApiKey()}
                       disabled={isSavingKey || !inputApiKey.trim()}
-                      className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold gap-1.5 shadow-sm shadow-indigo-600/30 cursor-pointer"
+                      className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-5 py-2 gap-1.5 shadow-sm cursor-pointer transition"
                     >
                       {isSavingKey ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -796,7 +1216,7 @@ export default function ProfilePage() {
                         size="sm"
                         onClick={() => void handleRemoveApiKey()}
                         disabled={isDeletingKey}
-                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1.5 cursor-pointer"
+                        className="rounded-full border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 text-xs text-red-400 hover:text-red-300 px-4 py-2 gap-1.5 cursor-pointer transition"
                       >
                         {isDeletingKey ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -808,7 +1228,7 @@ export default function ProfilePage() {
                     )}
                   </div>
 
-                  <span className="text-[11px] text-slate-500">
+                  <span className="text-[11px] text-slate-500 font-mono">
                     AES-256-GCM Encrypted
                   </span>
                 </div>
@@ -821,9 +1241,9 @@ export default function ProfilePage() {
         {/* SECTION 4: WORKSPACE ACCESS */}
         {/* ======================================================================= */}
         <section id="workspaces" className="space-y-4">
-          <div className="border-b border-white/10 pb-3">
+          <div className="border-b border-white/12 pb-3">
             <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-              <Layers className="h-4 w-4 text-indigo-400" />
+              <Layers className="h-4 w-4 text-purple-400" />
               <span>Workspace Access</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
@@ -832,26 +1252,28 @@ export default function ProfilePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="bg-[#0b0d1e] border-white/10 p-5 rounded-2xl flex flex-col justify-between shadow-xl">
+            <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
               <div className="space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-full bg-white/10 text-white border border-white/15">
                     <Code2 className="h-5 w-5" />
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-white">Developer IDE</h3>
                     <p className="text-[11px] text-slate-400">
-                      Monaco editor, live sandpack preview, file manager & terminal.
+                      Monaco editor, live runtime preview, file manager & terminal.
                     </p>
                   </div>
                 </div>
               </div>
-              <div className="pt-4 mt-2 border-t border-white/5 flex items-center justify-between">
+              <div className="pt-4 mt-3 border-t border-white/5 flex items-center justify-between">
                 <span className="text-[11px] text-slate-500 font-mono">Route: /editor?view=developer</span>
                 <Link href="/editor?view=developer">
                   <Button
                     size="sm"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold gap-1.5 shadow-sm shadow-indigo-600/30 cursor-pointer"
+                    className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-4 py-2 gap-1.5 shadow-sm cursor-pointer transition"
                   >
                     <span>Launch Developer IDE</span>
                     <span>&rarr;</span>
@@ -860,10 +1282,12 @@ export default function ProfilePage() {
               </div>
             </Card>
 
-            <Card className="bg-[#0b0d1e] border-white/10 p-5 rounded-2xl flex flex-col justify-between shadow-xl">
+            <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
               <div className="space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-full bg-white/10 text-purple-300 border border-white/15">
                     <Compass className="h-5 w-5" />
                   </div>
                   <div>
@@ -874,13 +1298,13 @@ export default function ProfilePage() {
                   </div>
                 </div>
               </div>
-              <div className="pt-4 mt-2 border-t border-white/5 flex items-center justify-between">
+              <div className="pt-4 mt-3 border-t border-white/5 flex items-center justify-between">
                 <span className="text-[11px] text-slate-500 font-mono">Route: /editor?view=product</span>
                 <Link href="/editor?view=product">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-200 text-xs font-semibold gap-1.5 cursor-pointer"
+                    className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs font-semibold px-4 py-2 gap-1.5 cursor-pointer transition"
                   >
                     <span>Launch Product Manager</span>
                     <span>&rarr;</span>
@@ -905,7 +1329,7 @@ export default function ProfilePage() {
             </p>
           </div>
 
-          <Card className="rounded-2xl border border-red-500/20 bg-red-950/10 p-6 space-y-4 shadow-xl">
+          <Card className="rounded-[24px] border border-red-500/20 bg-red-950/10 backdrop-blur-xl p-6 space-y-4 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-white">Delete Account</h3>
@@ -921,7 +1345,7 @@ export default function ProfilePage() {
                   setDeleteConfirmationText('');
                   setIsDeleteDialogOpen(true);
                 }}
-                className="bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shrink-0 cursor-pointer shadow-md shadow-red-600/30"
+                className="rounded-full bg-red-600 hover:bg-red-500 text-white font-semibold text-xs px-4 py-2 shrink-0 cursor-pointer shadow-md shadow-red-600/30 transition"
               >
                 <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                 <span>Delete Account</span>
@@ -935,7 +1359,9 @@ export default function ProfilePage() {
       {/* DELETE ACCOUNT CONFIRMATION DIALOG */}
       {/* ========================================================================= */}
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent className="bg-[#0b0d1e] border border-red-500/30 text-white max-w-md p-6 rounded-2xl shadow-2xl">
+        <DialogContent className="rounded-3xl border border-red-500/30 bg-[#18181a]/95 backdrop-blur-2xl shadow-2xl p-6 text-white max-w-md overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-red-500/30 to-transparent pointer-events-none" />
+
           <DialogHeader className="space-y-2 text-left">
             <div className="flex items-center gap-2.5 text-red-400">
               <AlertTriangle className="h-5 w-5" />
@@ -949,7 +1375,7 @@ export default function ProfilePage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="rounded-xl bg-black/40 border border-white/10 p-3.5 space-y-1.5 text-xs text-slate-300">
+          <div className="rounded-2xl bg-black/50 border border-white/10 p-4 space-y-2 text-xs text-slate-300">
             <p className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
               <span>User Profile and authentication account</span>
@@ -980,18 +1406,18 @@ export default function ProfilePage() {
               value={deleteConfirmationText}
               onChange={(e) => setDeleteConfirmationText(e.target.value)}
               placeholder="Type DELETE to confirm"
-              className="bg-black/50 border-white/10 font-mono text-xs text-white"
+              className="rounded-xl bg-white/[0.05] border-white/12 font-mono text-xs text-white focus:border-white/30"
               autoFocus
             />
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0 pt-3">
+          <DialogFooter className="gap-2 sm:gap-2 pt-3">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setIsDeleteDialogOpen(false)}
               disabled={isDeletingAccount}
-              className="border-white/10 bg-white/5 hover:bg-white/10 text-xs text-slate-300 cursor-pointer"
+              className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs px-4 py-2 cursor-pointer transition"
             >
               Cancel
             </Button>
@@ -1000,7 +1426,7 @@ export default function ProfilePage() {
               size="sm"
               onClick={() => void handleExecuteAccountDeletion()}
               disabled={deleteConfirmationText.trim() !== 'DELETE' || isDeletingAccount}
-              className="bg-red-600 hover:bg-red-500 text-xs font-semibold gap-1.5 cursor-pointer disabled:opacity-50"
+              className="rounded-full bg-red-600 hover:bg-red-500 text-white font-semibold text-xs px-4 py-2 gap-1.5 cursor-pointer disabled:opacity-50 transition"
             >
               {isDeletingAccount ? (
                 <>

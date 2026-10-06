@@ -5,7 +5,6 @@ import { AuthProvider } from '@/components/auth-provider';
 import { CreditProvider } from '@/components/credit-provider';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import AnimatedBackground from '@/components/animated-background';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -55,8 +54,6 @@ export default function RootLayout({
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans bg-[var(--ide-bg-base)] text-white antialiased`}
       >
         <TooltipProvider delayDuration={200}>
-          {/* Persistent hero video player: active and visible strictly on Home (/), hidden & paused everywhere else */}
-          <AnimatedBackground />
           <AuthProvider>
             <CreditProvider>{children}</CreditProvider>
           </AuthProvider>

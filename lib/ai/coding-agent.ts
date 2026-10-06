@@ -1,6 +1,7 @@
 import type { ProjectFile } from '@/lib/types/database';
 import { HfInference } from '@huggingface/inference';
 import { DEVELOPER_IDE_CONFIG } from './developer-ide-config';
+import { logProviderEvent, logSystemError } from '@/lib/admin/telemetry';
 
 export type FileOperation =
   | { type: 'create' | 'update'; path: string; content: string; language?: string }
@@ -1409,11 +1410,15 @@ export async function runHuggingFaceAgent(
 
       if (
         status === 401 ||
+        status === 403 ||
         errMsg.toLowerCase().includes('invalid username or password') ||
-        errMsg.toLowerCase().includes('unauthorized')
+        errMsg.toLowerCase().includes('unauthorized') ||
+        errMsg.toLowerCase().includes('permission') ||
+        errMsg.toLowerCase().includes('sufficient permissions') ||
+        errMsg.toLowerCase().includes('forbidden')
       ) {
         throw new HuggingFaceAuthError(
-          'Hugging Face API authentication failed. Check the server-side HF_TOKEN configuration.'
+          `Hugging Face API authentication/permission failed (${status || 403}): ${errMsg || 'Check HF_TOKEN permissions.'}`
         );
       }
 
@@ -1421,7 +1426,8 @@ export async function runHuggingFaceAgent(
         status === 402 ||
         errMsg.toLowerCase().includes('quota') ||
         errMsg.toLowerCase().includes('balance') ||
-        errMsg.toLowerCase().includes('insufficient')
+        errMsg.toLowerCase().includes('insufficient') ||
+        errMsg.toLowerCase().includes('depleted your monthly included credits')
       ) {
         throw new HuggingFaceQuotaError(
           'Hugging Face API credits or balance is insufficient. Please check billing or token settings.'
@@ -1445,8 +1451,7 @@ export async function runHuggingFaceAgent(
         errMsg.toLowerCase().includes('unavailable') ||
         errMsg.toLowerCase().includes('fetch failed') ||
         errMsg.toLowerCase().includes('network') ||
-        errMsg.toLowerCase().includes('requesting the provider') ||
-        errMsg.toLowerCase().includes('providerapi');
+        errMsg.toLowerCase().includes('requesting the provider');
 
       if (isServerError) {
         if (attempt < maxAttempts - 1) {
@@ -1574,16 +1579,16 @@ export async function runGeminiAgent(
 ): Promise<unknown> {
   const key = options?.aiConfig?.apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
   if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.local or add your personal API key in Profile.');
-  const model = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const rawModel = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const model = rawModel === 'gemini-3.6-flash' ? 'gemini-2.5-flash' : rawModel;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const maxAttempts = 4;
   const system = buildFullCodingAgentSystemPrompt(context);
 
   const generationConfig: Record<string, unknown> = {
     responseMimeType: 'application/json',
-    temperature: 0.2,
+    temperature: 1.0,
     maxOutputTokens: 65536,
-    thinkingConfig: { thinkingBudget: 0 },
     responseSchema: {
       type: 'OBJECT',
       properties: {
@@ -1638,23 +1643,28 @@ export async function runGeminiAgent(
     },
   };
 
-  const requestBody = JSON.stringify({
-    systemInstruction: { parts: [{ text: system }] },
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: JSON.stringify({ instruction: prompt, project: context }) }],
-      },
-    ],
-    generationConfig,
-  });
-
   let response: Response | undefined;
   let failureText = '';
+  let currentTemperature = 1.0;
+  let payload: any = null;
+  let candidate: any = null;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    console.log(`[Gemini API] Model: ${model}`);
-    console.log(`[Gemini API] Attempt: ${attempt + 1}/${maxAttempts}`);
+    console.log(`[Gemini API] Model: ${model}, Attempt: ${attempt + 1}/${maxAttempts}, Temp: ${currentTemperature}`);
+
+    const requestBody = JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: JSON.stringify({ instruction: prompt, project: context }) }],
+        },
+      ],
+      generationConfig: {
+        ...generationConfig,
+        temperature: currentTemperature,
+      },
+    });
 
     try {
       response = await fetch(url, {
@@ -1666,46 +1676,65 @@ export async function runGeminiAgent(
         body: requestBody,
       });
 
-      if (response.ok) {
+      if (!response.ok) {
+        failureText = (await response.text()).slice(0, 800);
+        console.warn(`[Gemini API] Status: ${response.status}`);
+
+        // Differentiate exhausted quota from temporary rate limiting
+        const isQuotaExceeded =
+          response.status === 429 &&
+          (failureText.toLowerCase().includes('quota') ||
+            failureText.toLowerCase().includes('billing') ||
+            failureText.toLowerCase().includes('exceeded your current quota'));
+
+        if (isQuotaExceeded) {
+          console.error('[Gemini API] Quota exhausted (429):', failureText.slice(0, 300));
+          throw new GeminiQuotaError(
+            'Gemini API quota has been exceeded for the configured API key/project. Check Gemini API usage and billing/quota settings.'
+          );
+        }
+
+        const isRetryable = [429, 500, 502, 503, 504].includes(response.status);
+        if (!isRetryable || attempt === maxAttempts - 1) {
+          break;
+        }
+
+        const retryAfterHeader = Number(response.headers.get('retry-after'));
+        const baseDelay = 1000 * Math.pow(2, attempt);
+        const jitter = Math.floor(Math.random() * (200 + attempt * 200));
+        const delay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? retryAfterHeader * 1000
+          : baseDelay + jitter;
+
+        console.log(`[Gemini API] Retrying in ${delay}ms`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      payload = (await response.json()) as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+          finishReason?: string;
+        }>;
+        usageMetadata?: {
+          candidatesTokenCount?: number;
+          promptTokenCount?: number;
+          totalTokenCount?: number;
+        };
+      };
+
+      candidate = payload?.candidates?.[0];
+
+      if (candidate?.finishReason === 'RECITATION' && attempt < maxAttempts - 1) {
+        console.warn(`[Gemini API] Output flagged as RECITATION at attempt ${attempt + 1}. Retrying with high entropy temperature (1.1)...`);
+        currentTemperature = 1.1;
+        await new Promise<void>((resolve) => setTimeout(resolve, 800));
+        continue;
+      }
+
+      if (candidate) {
         break;
       }
-
-      failureText = (await response.text()).slice(0, 800);
-      console.warn(`[Gemini API] Status: ${response.status}`);
-
-      // Differentiate exhausted quota from temporary rate limiting
-      const isQuotaExceeded =
-        response.status === 429 &&
-        (failureText.toLowerCase().includes('quota') ||
-          failureText.toLowerCase().includes('billing') ||
-          failureText.toLowerCase().includes('exceeded your current quota'));
-
-      if (isQuotaExceeded) {
-        console.error('[Gemini API] Quota exhausted (429):', failureText.slice(0, 300));
-        throw new GeminiQuotaError(
-          'Gemini API quota has been exceeded for the configured API key/project. Check Gemini API usage and billing/quota settings.'
-        );
-      }
-
-      const isRetryable = [429, 500, 502, 503, 504].includes(response.status);
-      if (!isRetryable || attempt === maxAttempts - 1) {
-        break;
-      }
-
-      // Controlled exponential backoff with jitter:
-      // Attempt 0 -> wait ~1s (+ jitter)
-      // Attempt 1 -> wait ~2s (+ jitter)
-      // Attempt 2 -> wait ~4s (+ jitter)
-      // Attempt 3 -> wait ~8s (+ jitter)
-      const retryAfterHeader = Number(response.headers.get('retry-after'));
-      const baseDelay = 1000 * Math.pow(2, attempt);
-      const jitter = Math.floor(Math.random() * (200 + attempt * 200));
-      const delay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
-        ? retryAfterHeader * 1000
-        : baseDelay + jitter;
-
-      console.log(`[Gemini API] Retrying in ${delay}ms`);
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
     } catch (err) {
       if (err instanceof GeminiQuotaError) throw err;
       failureText = err instanceof Error ? err.message : 'Network failure';
@@ -1718,7 +1747,7 @@ export async function runGeminiAgent(
     }
   }
 
-  if (!response?.ok) {
+  if (!response?.ok && !candidate) {
     if (response && [500, 502, 503, 504].includes(response.status)) {
       throw new GeminiUnavailableError(
         'Gemini is temporarily unavailable. The model is experiencing high demand. Retried automatically; please try again shortly.'
@@ -1732,19 +1761,6 @@ export async function runGeminiAgent(
     throw new Error(`Gemini request failed (${response?.status ?? 'network'}): ${failureText}`);
   }
 
-  const payload = (await response.json()) as {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
-      finishReason?: string;
-    }>;
-    usageMetadata?: {
-      candidatesTokenCount?: number;
-      promptTokenCount?: number;
-      totalTokenCount?: number;
-    };
-  };
-
-  const candidate = payload.candidates?.[0];
   if (!candidate) {
     throw new Error('Gemini returned no candidates in response.');
   }
@@ -1758,11 +1774,16 @@ export async function runGeminiAgent(
   }
 
   const finishReason = candidate.finishReason;
-  const parts = candidate.content?.parts ?? [];
-  const rawText = parts.map((part) => part.text ?? '').join('').trim();
+  const parts: Array<{ text?: string; thought?: boolean }> = candidate.content?.parts ?? [];
+  const textParts = parts.filter((p) => !p.thought && typeof p.text === 'string' && p.text.trim().length > 0);
+  const rawText = (textParts.length > 0 ? textParts : parts)
+    .map((part) => part.text ?? '')
+    .join('')
+    .trim();
 
   if (!rawText) {
-    throw new Error('Gemini returned an empty response.');
+    console.error('[Gemini API] Empty text in response candidate:', JSON.stringify(candidate));
+    throw new Error(`Gemini returned an empty response (finishReason: ${finishReason || 'unknown'}).`);
   }
 
   console.log(`[Gemini API] Request succeeded with model: ${model}`);
@@ -1823,7 +1844,7 @@ export async function runCodingAgent(
   try {
     return await runHuggingFaceAgent(prompt, context, options);
   } catch (hfErr) {
-    // Only fall back to Gemini if Hugging Face is genuinely unavailable (provider outage, 5xx, network failure)
+    // Check if Hugging Face is unavailable (provider outage, 5xx, network failure)
     const isUnavailable =
       hfErr instanceof HuggingFaceUnavailableError ||
       (hfErr as { name?: string })?.name === 'HuggingFaceUnavailableError' ||
@@ -1838,18 +1859,75 @@ export async function runCodingAgent(
         hfErr.message.toLowerCase().includes('network')
       ));
 
-    // Do NOT fall back for authentication failure, quota/credit errors, malformed responses, or prompt validation
-    if (isUnavailable) {
+    // Platform quota/credits exhausted on server-side token (HTTP 402)
+    const isPlatformQuotaDepleted =
+      options?.aiConfig?.keySource !== 'byok' && (
+        hfErr instanceof HuggingFaceQuotaError ||
+        (hfErr as { name?: string })?.name === 'HuggingFaceQuotaError' ||
+        (hfErr as { status?: number })?.status === 402 ||
+        (hfErr instanceof Error && (
+          hfErr.message.includes('402') ||
+          hfErr.message.toLowerCase().includes('balance') ||
+          hfErr.message.toLowerCase().includes('insufficient') ||
+          hfErr.message.toLowerCase().includes('depleted your monthly included credits') ||
+          hfErr.message.toLowerCase().includes('credits or balance is insufficient') ||
+          hfErr.message.toLowerCase().includes('quota')
+        ))
+      );
+
+    // Platform token auth/permission failure (HTTP 401/403)
+    const isPlatformAuthFailed =
+      options?.aiConfig?.keySource !== 'byok' && (
+        hfErr instanceof HuggingFaceAuthError ||
+        (hfErr as { name?: string })?.name === 'HuggingFaceAuthError' ||
+        (hfErr as { status?: number })?.status === 401 ||
+        (hfErr as { status?: number })?.status === 403 ||
+        (hfErr instanceof Error && (
+          hfErr.message.toLowerCase().includes('permission') ||
+          hfErr.message.toLowerCase().includes('authentication') ||
+          hfErr.message.toLowerCase().includes('unauthorized') ||
+          hfErr.message.toLowerCase().includes('forbidden')
+        ))
+      );
+
+    const isPlatformToken = options?.aiConfig?.keySource !== 'byok';
+
+    if (isPlatformToken || isUnavailable || isPlatformQuotaDepleted) {
       const geminiKey = process.env.GEMINI_API_KEY?.trim();
       if (!geminiKey) {
-        console.warn('[Coding Agent Fallback] Hugging Face unavailable but GEMINI_API_KEY is not configured in environment.');
+        console.warn('[Coding Agent Fallback] Hugging Face failed but GEMINI_API_KEY is not configured in environment.');
       } else {
-        console.warn('[Coding Agent] Hugging Face unavailable. Gracefully falling back to Gemini:', hfErr instanceof Error ? hfErr.message : hfErr);
+        const fallbackReason = isPlatformQuotaDepleted
+          ? 'Hugging Face platform credits depleted (402). Automatically routed to Gemini fallback.'
+          : isPlatformAuthFailed
+          ? 'Hugging Face platform token permission/auth error (401/403). Automatically routed to Gemini fallback.'
+          : 'Hugging Face unavailable. Gracefully falling back to Gemini.';
+        console.warn('[Coding Agent]', fallbackReason, hfErr instanceof Error ? hfErr.message : hfErr);
         const fallbackModel = DEVELOPER_IDE_CONFIG.fallbackModel;
         options?.onFallback?.({
           providerId: DEVELOPER_IDE_CONFIG.fallbackProvider,
           model: fallbackModel,
         });
+
+        const statusCode = isPlatformQuotaDepleted ? 402 : isPlatformAuthFailed ? 403 : 503;
+
+        // Non-blocking telemetry tracking for Admin Panel
+        logProviderEvent({
+          provider: 'huggingface',
+          status: 'fallback',
+          eventType: 'fallback_triggered',
+          statusCode,
+          message: fallbackReason,
+        }).catch(() => { });
+
+        logSystemError({
+          severity: 'WARNING',
+          category: 'AI_PROVIDER',
+          provider: 'huggingface',
+          statusCode,
+          message: `${fallbackReason} Upstream error: ${hfErr instanceof Error ? hfErr.message : 'Provider Failure'}`,
+        }).catch(() => { });
+
         return await runGeminiAgent(prompt, context, {
           ...options,
           aiConfig: {

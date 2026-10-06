@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/server";
+import { createClient, createPrivilegedClient } from "@/lib/server";
+import { getCurrentUser } from "@/lib/auth";
+import { isConfiguredAdminEmail } from "@/lib/admin/auth";
 
 export const runtime = "nodejs";
 
@@ -10,16 +12,45 @@ export async function GET() {
       data: { user: sbUser },
     } = await supabase.auth.getUser();
 
-    if (sbUser) {
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
+
+    if (user) {
+      let role = 'user';
+      let isAdmin = isConfiguredAdminEmail(user.email);
+
+      try {
+        const privileged = createPrivilegedClient();
+        const { data: profile } = await privileged
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (profile?.role === 'admin' || isAdmin) {
+          isAdmin = true;
+          role = 'admin';
+        } else if (profile?.role) {
+          role = profile.role;
+        }
+      } catch {
+        // Fallback to configured email check
+      }
+
+      const name =
+        ('user_metadata' in user && user.user_metadata?.full_name) ||
+        ('user_metadata' in user && user.user_metadata?.name) ||
+        ('name' in user && user.name) ||
+        user.email?.split("@")[0] ||
+        (isAdmin ? "Administrator" : "User");
+
       return NextResponse.json({
         user: {
-          id: sbUser.id,
-          name:
-            sbUser.user_metadata?.full_name ||
-            sbUser.user_metadata?.name ||
-            sbUser.email?.split("@")[0] ||
-            "User",
-          email: sbUser.email || "",
+          id: user.id,
+          name,
+          email: user.email || "",
+          role,
+          isAdmin,
         },
       });
     }

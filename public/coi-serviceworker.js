@@ -82,16 +82,6 @@ if (typeof window === 'undefined') {
       return;
     }
 
-    const reloadedBySelf = window.sessionStorage.getItem('coiReloadedBySelf');
-
-    // If server provides headers on hard reload, reload once to pick them up
-    if (!reloadedBySelf) {
-      window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-      window.location.reload();
-      return;
-    }
-
-    // Fallback: If hard reload still didn't isolate (e.g. proxy environment), register service worker
     if (!navigator.serviceWorker) {
       return;
     }
@@ -99,19 +89,8 @@ if (typeof window === 'undefined') {
     const coiScope = window.location.pathname.startsWith('/preview') ? '/preview' : '/editor';
     navigator.serviceWorker
       .register('/coi-serviceworker.js', { scope: coiScope })
-      .then(
-        (registration) => {
-          registration.addEventListener('updatefound', () => {
-            window.location.reload();
-          });
-
-          if (registration.active && !navigator.serviceWorker.controller) {
-            window.location.reload();
-          }
-        },
-        (err) => {
-          console.warn('[COI] Registration:', err);
-        }
-      );
+      .catch((err) => {
+        console.warn('[COI] Registration:', err);
+      });
   })();
 }

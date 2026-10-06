@@ -29,3 +29,5 @@ export async function createClient() {
     },
   });
 }
+
+export { createPrivilegedClient } from './admin/privileged-client';

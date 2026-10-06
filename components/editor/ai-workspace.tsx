@@ -20,12 +20,15 @@ import {
   Edit2,
   RotateCcw,
   ArrowDown,
+  AlertCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { useCredits } from '@/components/credit-provider';
+import { CreditExhaustionDialog } from '@/components/credits/credit-exhaustion-dialog';
 import { toast } from 'sonner';
 import type { ProjectFile } from '@/lib/types/database';
 
@@ -81,21 +84,8 @@ export interface AIWorkspaceProps {
   onEditMessage?: (messageId: string, newContent: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
   isChatLoading?: boolean;
+  isNoProject?: boolean;
 }
-
-const BUILD_SUGGESTIONS = [
-  'Build a Netflix-style streaming homepage with dark theme, cinematic hero, movie rows, and search',
-  'Build a modern developer portfolio with project showcases, skills matrix, and contact form',
-  'Create a SaaS analytics dashboard with chart widgets, KPI metrics, and dark mode',
-  'Build an e-commerce storefront with cart drawer, product grid, and category filters',
-];
-
-const CODE_SUGGESTIONS = [
-  'Make the hero section taller and add more movie posters',
-  'Add live search filtering with real-time query highlight',
-  'Refactor into clean reusable functional components with TypeScript types',
-  'Add a sleek mobile navigation drawer and responsive layout',
-];
 
 export function AIWorkspace({
   files,
@@ -110,19 +100,23 @@ export function AIWorkspace({
   onStopWorking,
   onOpenDiagnostics,
   currentMode = 'build',
+  onModeChange,
   conversation,
   generationStage,
   onSelectGeneratedFile,
   onEditMessage,
   onRegenerateMessage,
   isChatLoading = false,
+  isNoProject = false,
+  projectId,
 }: AIWorkspaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { creditsRemaining } = useCredits();
+  const { creditsRemaining, creditLimit, isAdmin } = useCredits();
 
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
   const [attachedImage, setAttachedImage] = useState<{ name: string; dataUrl: string } | null>(null);
   const [expandedOps, setExpandedOps] = useState<Record<string, boolean>>({});
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -211,6 +205,10 @@ export function AIWorkspace({
 
   const handleSend = () => {
     if (isWorking || (!prompt.trim() && !attachedImage)) return;
+    if (!isAdmin && creditsRemaining <= 0) {
+      setShowUpgradeDialog(true);
+      return;
+    }
     const imgData = attachedImage?.dataUrl;
     setAttachedImage(null);
     void onGenerate(undefined, currentMode, imgData);
@@ -235,48 +233,70 @@ export function AIWorkspace({
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#0a0b16] text-xs text-slate-200 select-none overflow-hidden relative">
-      {/* Top Header: Clean Codatron AI Branding (No internal model/provider IDs) */}
-      <div className="h-12 px-3.5 border-b border-white/10 bg-[#0d0f20] flex items-center justify-between shrink-0">
+    <div className="flex h-full flex-col bg-[#000] text-xs text-slate-200 select-none overflow-hidden relative">
+      {/* Top Header: Clean Codatron AI Branding with Pill Mode Selector */}
+      <div className="h-12 px-3.5 border-b border-white/10 bg-black/40 backdrop-blur-xl flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white shadow-sm shadow-indigo-500/30">
-            <Sparkles className="h-4 w-4" />
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-black shadow-sm overflow-hidden shrink-0">
+            <img src="/assets/logo.webp" alt="Codatron" className="h-4 w-4 object-contain" />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-white text-xs tracking-tight">Codatron AI</span>
             </div>
-            <p className="text-[10px] text-slate-400 font-normal">AI Application Builder</p>
+            <p className="text-[10px] text-slate-400 font-normal">Application Builder</p>
           </div>
+        </div>
+
+        {/* Center: Pill Mode Selector */}
+        <div className="flex items-center rounded-full border border-white/12 bg-[#28282a] p-0.5 gap-0.5">
+          {(['build', 'code', 'debug'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => onModeChange?.(m)}
+              className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold capitalize transition cursor-pointer ${
+                currentMode === m
+                  ? 'bg-white text-black shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {m}
+            </button>
+          ))}
         </div>
 
         {/* Right Status Indicator & Credit Count */}
         <div className="flex items-center gap-2">
           {isWorking ? (
             <Badge
-              variant="outline"
-              className="border-indigo-500/30 bg-indigo-500/10 text-[10px] text-indigo-300 font-medium py-0.5 px-2 flex items-center gap-1.5"
+              variant="pill"
+              className="text-[10px] text-white font-medium py-0.5 px-2 flex items-center gap-1.5"
             >
-              <Loader2 className="h-2.5 w-2.5 animate-spin text-indigo-400" />
+              <Loader2 className="h-2.5 w-2.5 animate-spin text-white" />
               <span>Building…</span>
             </Badge>
           ) : (
             <Badge
-              variant="outline"
-              className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300 font-medium py-0.5 px-2 flex items-center gap-1.5"
+              variant="pill"
+              className="text-[10px] text-slate-200 font-medium py-0.5 px-2 flex items-center gap-1.5"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
               <span>Ready</span>
             </Badge>
           )}
 
-          <div
-            className="flex items-center gap-1 text-amber-400 text-[11px] font-medium bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md"
-            title={`${creditsRemaining} AI credits available`}
+          <button
+            type="button"
+            onClick={() => !isAdmin && setShowUpgradeDialog(true)}
+            className={`flex items-center gap-1 text-[11px] font-medium bg-[#28282a] border border-white/10 px-2.5 py-0.5 rounded-full transition ${
+              !isAdmin ? 'hover:border-white/25 cursor-pointer text-slate-200' : 'text-slate-200 cursor-default'
+            }`}
+            title={isAdmin ? "Unlimited AI credits (Admin)" : `${creditsRemaining} of ${creditLimit} AI credits remaining`}
           >
-            <Zap className="h-3 w-3 fill-current" />
-            <span>{creditsRemaining}</span>
-          </div>
+            <Zap className="h-3 w-3 text-amber-400" />
+            <span>{isAdmin ? '∞ Unlimited' : `${creditsRemaining} / ${creditLimit}`}</span>
+          </button>
         </div>
       </div>
 
@@ -306,36 +326,13 @@ export function AIWorkspace({
                 <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-600 text-white">
                   <Sparkles className="h-3 w-3" />
                 </span>
-                <span>AI Application Builder</span>
+                <span>{isNoProject ? 'Start building with AI' : 'AI Application Builder'}</span>
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
-                Describe what you want to build. Codatron builds the full experience, creates responsive layouts,
-                adds real visual assets, and prepares your live preview automatically.
+                {isNoProject
+                  ? "You don't have a project yet. Describe what you'd like to build and Codatron will create your first project."
+                  : 'Describe what you want to build. Codatron builds the full experience, creates responsive layouts, adds real visual assets, and prepares your live preview automatically.'}
               </p>
-            </div>
-
-            {/* Suggestions Chips */}
-            <div className="space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 px-0.5">
-                Suggested Prompts
-              </p>
-              <div className="space-y-1.5">
-                {(files.length === 0 ? BUILD_SUGGESTIONS : CODE_SUGGESTIONS).map((text) => (
-                  <button
-                    key={text}
-                    type="button"
-                    disabled={isWorking}
-                    onClick={() => {
-                      setPrompt(text);
-                      textareaRef.current?.focus();
-                    }}
-                    className="w-full text-left rounded-xl border border-white/5 bg-white/[0.03] hover:bg-white/[0.08] hover:border-indigo-500/30 p-2.5 text-[11px] text-slate-300 transition group flex items-start justify-between gap-2 cursor-pointer"
-                  >
-                    <span className="leading-snug">{text}</span>
-                    <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-indigo-400 group-hover:translate-x-0.5 transition shrink-0 mt-0.5" />
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         )}
@@ -650,19 +647,19 @@ export function AIWorkspace({
       )}
 
       {/* Bottom Prompt Composer */}
-      <div className="p-3 border-t border-white/10 bg-[#0d0f20]/95 backdrop-blur-md space-y-2 shrink-0">
+      <div className="p-3 border-t border-white/10 bg-black/50 backdrop-blur-xl space-y-2 shrink-0">
         {/* Active Context Chips (active file or selected code) */}
         {(activePath || selectedCode) && (
           <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] pb-0.5">
             {activePath && (
-              <span className="flex items-center gap-1 bg-white/5 border border-white/10 px-2 py-0.5 rounded-md text-slate-300 font-mono truncate">
+              <span className="flex items-center gap-1 bg-white/[0.05] border border-white/10 px-2.5 py-0.5 rounded-full text-slate-300 font-mono truncate">
                 <FileCode className="h-2.5 w-2.5 text-blue-400 shrink-0" />
                 <span className="truncate">{activePath}</span>
               </span>
             )}
             {selectedCode && (
-              <span className="flex items-center gap-1 bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 rounded-md text-cyan-300 truncate">
-                <Code2 className="h-2.5 w-2.5 text-cyan-400 shrink-0" />
+              <span className="flex items-center gap-1 bg-white/[0.08] border border-white/15 px-2.5 py-0.5 rounded-full text-slate-200 truncate">
+                <Code2 className="h-2.5 w-2.5 text-white shrink-0" />
                 <span>Selected snippet</span>
                 {onClearSelectedCode && (
                   <button
@@ -687,27 +684,77 @@ export function AIWorkspace({
           onChange={handleImageSelect}
         />
 
+        {/* Low Credit & Exhaustion Warnings */}
+        {!isAdmin && creditsRemaining <= 0 && (
+          <div className="flex items-center justify-between rounded-2xl border border-red-500/20 bg-red-950/30 px-3.5 py-2 text-xs text-red-200">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-red-400 shrink-0" />
+              <span>You're out of Codatron AI credits. Upgrade your plan to continue building with AI.</span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowUpgradeDialog(true)}
+              className="rounded-full bg-white text-black hover:bg-slate-200 text-[11px] font-semibold h-7 px-3 shrink-0 cursor-pointer"
+            >
+              Upgrade Plan
+            </Button>
+          </div>
+        )}
+
+        {!isAdmin && creditsRemaining > 0 && creditsRemaining <= 10 && (
+          <div className="flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span>Only {creditsRemaining} AI credits remaining.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowUpgradeDialog(true)}
+              className="underline hover:text-white font-medium cursor-pointer"
+            >
+              View Plans
+            </button>
+          </div>
+        )}
+
+        {!isAdmin && creditsRemaining > 10 && creditsRemaining <= 25 && (
+          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] text-slate-300">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+              <span>You're running low on AI credits ({creditsRemaining} remaining).</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowUpgradeDialog(true)}
+              className="underline hover:text-white font-medium cursor-pointer"
+            >
+              View Plans
+            </button>
+          </div>
+        )}
+
         {/* Composer Box */}
-        <div className="relative rounded-2xl border border-white/10 bg-slate-950/80 p-2.5 focus-within:border-indigo-500/60 shadow-inner transition space-y-2">
+        <div className="relative rounded-[24px] border border-white/12 bg-white/[0.04] p-3 focus-within:border-white/30 shadow-2xl transition space-y-2">
           {isWorking && (
-            <BorderBeam size={80} duration={3} colorFrom="#8b5cf6" colorTo="#3b82f6" />
+            <BorderBeam size={80} duration={3} colorFrom="#ffffff" colorTo="#8b5cf6" />
           )}
 
           {/* Attached Image Preview Chip */}
           {attachedImage && (
-            <div className="flex items-center gap-2 bg-indigo-950/50 border border-indigo-500/30 rounded-xl p-1.5 text-[11px] text-indigo-200">
+            <div className="flex items-center gap-2 bg-white/[0.06] border border-white/15 rounded-2xl p-1.5 text-[11px] text-white">
               <img
                 src={attachedImage.dataUrl}
                 alt="Attachment"
-                className="w-7 h-7 rounded-lg object-cover border border-indigo-400/40"
+                className="w-7 h-7 rounded-xl object-cover border border-white/20"
               />
-              <span className="truncate max-w-[200px] font-mono text-[10px] text-indigo-300">
+              <span className="truncate max-w-[200px] font-mono text-[10px] text-slate-300">
                 {attachedImage.name}
               </span>
               <button
                 type="button"
                 onClick={() => setAttachedImage(null)}
-                className="text-slate-400 hover:text-white ml-auto p-1 rounded-md hover:bg-white/10 cursor-pointer"
+                className="text-slate-400 hover:text-white ml-auto p-1 rounded-full hover:bg-white/10 cursor-pointer"
                 title="Remove image"
               >
                 <X className="h-3 w-3" />
@@ -739,7 +786,7 @@ export function AIWorkspace({
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isWorking}
-                className="h-7 px-2 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1.5 rounded-lg cursor-pointer"
+                className="h-8 px-3 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1.5 rounded-full cursor-pointer"
                 title="Attach reference image or mockup"
               >
                 <Paperclip className="h-3.5 w-3.5" />
@@ -755,7 +802,7 @@ export function AIWorkspace({
                   variant="outline"
                   size="sm"
                   onClick={onStopWorking}
-                  className="h-7 px-2.5 text-[11px] text-red-300 border-red-500/30 bg-red-500/10 hover:bg-red-500/20 gap-1 rounded-lg cursor-pointer"
+                  className="h-8 px-3.5 text-[11px] text-red-300 border-red-500/30 bg-red-500/10 hover:bg-red-500/20 gap-1 rounded-full cursor-pointer"
                 >
                   <Square className="h-2.5 w-2.5 fill-current" />
                   <span>Stop</span>
@@ -766,11 +813,11 @@ export function AIWorkspace({
                 onClick={handleSend}
                 disabled={isWorking || (!prompt.trim() && !attachedImage)}
                 size="sm"
-                className="h-7 gap-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 px-3.5 text-xs font-semibold text-white shadow-md shadow-indigo-500/20 active:scale-95 disabled:opacity-50 transition cursor-pointer"
+                className="h-8 gap-1.5 rounded-full bg-white hover:bg-slate-200 text-black px-4 text-xs font-semibold shadow-md active:scale-95 disabled:opacity-40 transition cursor-pointer"
               >
                 {isWorking ? (
                   <>
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <Loader2 className="h-3 w-3 animate-spin text-black" />
                     <span>Building…</span>
                   </>
                 ) : (
@@ -784,6 +831,14 @@ export function AIWorkspace({
           </div>
         </div>
       </div>
+
+      <CreditExhaustionDialog
+        open={showUpgradeDialog}
+        onOpenChange={setShowUpgradeDialog}
+        remainingCredits={creditsRemaining}
+        requiredCredits={10}
+        projectId={projectId}
+      />
     </div>
   );
 }

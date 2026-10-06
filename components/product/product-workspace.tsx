@@ -123,7 +123,7 @@ export function ProductWorkspace({
       setEditingTaskId(null);
       return;
     }
-    const updatedTasks = productPlan.developmentTasks.map((t) =>
+    const updatedTasks = (productPlan.developmentTasks || []).map((t) =>
       t.id === taskId ? { ...t, title: clean } : t
     );
     const updatedPlan: ProductPlan = { ...productPlan, developmentTasks: updatedTasks };
@@ -147,7 +147,7 @@ export function ProductWorkspace({
       setEditingFeatureId(null);
       return;
     }
-    const updatedFeatures = productPlan.features.map((f) =>
+    const updatedFeatures = (productPlan.features || []).map((f) =>
       f.id === featureId ? { ...f, title: clean } : f
     );
     const updatedPlan: ProductPlan = { ...productPlan, features: updatedFeatures };
@@ -213,7 +213,7 @@ export function ProductWorkspace({
 
     // Progress status: TODO -> IN PROGRESS
     if (productPlan) {
-      const inProgressTasks = productPlan.developmentTasks.map((t) =>
+      const inProgressTasks = (productPlan.developmentTasks || []).map((t) =>
         t.id === task.id ? { ...t, status: 'in-progress' as const } : t
       );
       onPlanGenerated({ ...productPlan, developmentTasks: inProgressTasks });
@@ -251,7 +251,7 @@ export function ProductWorkspace({
 
       // Progress status: IN PROGRESS -> COMPLETED
       if (productPlan) {
-        const updatedTasks = productPlan.developmentTasks.map((t) =>
+        const updatedTasks = (productPlan.developmentTasks || []).map((t) =>
           t.id === task.id ? { ...t, status: 'completed' as const } : t
         );
         onPlanGenerated({ ...productPlan, developmentTasks: updatedTasks });
@@ -270,10 +270,12 @@ export function ProductWorkspace({
     }
   };
 
-  const devTasks = productPlan?.developmentTasks;
+  const devTasks = useMemo(() => {
+    return Array.isArray(productPlan?.developmentTasks) ? productPlan.developmentTasks : [];
+  }, [productPlan?.developmentTasks]);
 
   const tasksList = useMemo(() => {
-    if (!devTasks) return [];
+    if (!devTasks || devTasks.length === 0) return [];
     return devTasks.filter((t) => {
       const matchesStatus = taskFilterStatus === 'all' || t.status === taskFilterStatus;
       const matchesSearch =
@@ -285,22 +287,25 @@ export function ProductWorkspace({
   }, [devTasks, taskFilterStatus, taskSearch]);
 
   const completedCount = useMemo(() => {
-    return devTasks?.filter((t) => t.status === 'completed').length || 0;
+    return devTasks.filter((t) => t.status === 'completed').length;
   }, [devTasks]);
 
-  const totalTasks = productPlan?.developmentTasks.length || 0;
+  const totalTasks = devTasks.length;
 
   return (
-    <div className="flex-1 flex h-full bg-[#080914] text-slate-100 overflow-hidden select-none">
+    <div className="flex-1 flex h-full bg-[#000] text-slate-100 overflow-hidden select-none relative">
+      {/* Subtle atmospheric glow background */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.1),rgba(255,255,255,0))] z-0" />
+
       {/* ========================================================================= */}
       {/* LEFT NAVIGATION SIDEBAR */}
       {/* ========================================================================= */}
-      <aside className="w-64 shrink-0 bg-[#0d0f22] border-r border-white/10 flex flex-col justify-between">
+      <aside className="w-64 shrink-0 bg-black/40 backdrop-blur-xl border-r border-white/10 flex flex-col justify-between relative z-10">
         <div className="flex flex-col">
           {/* Header */}
           <div className="h-14 px-4 border-b border-white/10 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-black shadow-md overflow-hidden shrink-0">
                 <Compass className="h-4 w-4" />
               </span>
               <div>
@@ -314,7 +319,7 @@ export function ProductWorkspace({
 
           {/* Nav List */}
           <ScrollArea className="px-2 py-3">
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {SECTIONS.map((sec) => {
                 const Icon = sec.icon;
                 const isActive = activeSection === sec.id;
@@ -325,20 +330,20 @@ export function ProductWorkspace({
                     key={sec.id}
                     type="button"
                     onClick={() => setActiveSection(sec.id)}
-                    className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition ${isActive
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                    className={`flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium transition cursor-pointer ${isActive
+                      ? 'bg-white text-black font-semibold shadow-md'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                       }`}
                   >
                     <div className="flex items-center gap-2.5">
-                      <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                      <Icon className={`h-4 w-4 ${isActive ? 'text-black' : 'text-slate-400'}`} />
                       <span>{sec.label}</span>
                     </div>
                     {isTasks && totalTasks > 0 && (
                       <Badge
                         variant="secondary"
-                        className={`h-4 px-1 text-[10px] ${isActive
-                          ? 'bg-white/20 text-white'
+                        className={`h-4 px-1.5 text-[10px] rounded-full ${isActive
+                          ? 'bg-black/10 text-black'
                           : 'bg-white/10 text-slate-300'
                           }`}
                       >
@@ -358,7 +363,7 @@ export function ProductWorkspace({
             variant="outline"
             size="sm"
             onClick={() => onSwitchToDeveloper()}
-            className="w-full border-white/10 bg-white/5 hover:bg-white/10 text-slate-200 text-xs justify-between"
+            className="w-full rounded-full border-white/15 bg-white/[0.04] hover:bg-white/10 text-slate-200 text-xs justify-between px-3.5 h-9"
           >
             <div className="flex items-center gap-2">
               <Code2 className="h-3.5 w-3.5 text-indigo-400" />
@@ -375,16 +380,16 @@ export function ProductWorkspace({
       {/* ========================================================================= */}
       {/* MAIN CONTENT AREA */}
       {/* ========================================================================= */}
-      <main className="flex-1 flex flex-col min-w-0 bg-[#080914] overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 bg-transparent overflow-hidden relative z-10">
         {/* Top Header */}
-        <header className="h-14 px-6 border-b border-white/10 bg-[#0d0f22] flex items-center justify-between shrink-0">
+        <header className="h-14 px-6 border-b border-white/10 bg-black/40 backdrop-blur-xl flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <h1 className="text-sm font-bold text-white capitalize tracking-wide">
               {SECTIONS.find((s) => s.id === activeSection)?.label}
             </h1>
             <Badge
-              variant="outline"
-              className="border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px]"
+              variant="pill"
+              className="text-[10px]"
             >
               {workspaceName ?? project?.name ?? 'AI Project'}
             </Badge>
@@ -397,7 +402,7 @@ export function ProductWorkspace({
                 variant="outline"
                 onClick={handleManualSavePlan}
                 disabled={isSavingPlan}
-                className="border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 text-xs gap-1.5 font-medium cursor-pointer"
+                className="rounded-full border-white/15 bg-white/[0.05] hover:bg-white/10 text-slate-200 text-xs px-3.5 h-9 gap-1.5 font-medium cursor-pointer"
               >
                 {isSavingPlan ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -411,7 +416,7 @@ export function ProductWorkspace({
             <Button
               size="sm"
               onClick={() => setShowIdeaModal(true)}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs gap-1.5 font-medium shadow-sm shadow-indigo-600/30 cursor-pointer"
+              className="bg-white hover:bg-slate-200 text-black text-xs gap-1.5 font-semibold px-4 h-9 rounded-full shadow-md cursor-pointer transition"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>{productPlan ? 'Evolve / Update Plan' : 'Define Product Idea'}</span>
@@ -460,7 +465,7 @@ export function ProductWorkspace({
                       {taskStage === 'done' && 'Phase 3: Source files committed and persisted to Supabase!'}
                     </h4>
                     <p className="text-xs text-indigo-300/80">
-                      Task: {productPlan?.developmentTasks.find((t) => t.id === activeTaskId)?.title}
+                      Task: {devTasks.find((t) => t.id === activeTaskId)?.title || activeTaskId}
                     </p>
                   </div>
                 </div>
@@ -488,7 +493,7 @@ export function ProductWorkspace({
                         <span>Executive Summary</span>
                       </div>
                       <p className="text-xs text-slate-300 leading-relaxed">
-                        {productPlan.overview?.summary || productPlan.vision.purpose}
+                        {productPlan.overview?.summary || productPlan.vision?.purpose || 'No summary available.'}
                       </p>
                     </div>
 
@@ -498,7 +503,7 @@ export function ProductWorkspace({
                           Total Features
                         </span>
                         <div className="text-2xl font-bold text-white mt-1">
-                          {productPlan.features.length}
+                          {productPlan.features?.length || 0}
                         </div>
                       </div>
                       <div className="rounded-xl border border-white/10 bg-[#0f1128] p-4">
@@ -506,7 +511,7 @@ export function ProductWorkspace({
                           Development Tasks
                         </span>
                         <div className="text-2xl font-bold text-white mt-1">
-                          {productPlan.developmentTasks.length}
+                          {totalTasks}
                         </div>
                       </div>
                       <div className="rounded-xl border border-white/10 bg-[#0f1128] p-4">
@@ -527,7 +532,7 @@ export function ProductWorkspace({
                         <strong>Audience:</strong> {productPlan.overview?.targetAudience || 'Modern web application users and teams'}
                       </p>
                       <p className="text-xs text-slate-400">
-                        <strong>Differentiator:</strong> {productPlan.overview?.keyDifferentiator || productPlan.vision.valueProposition}
+                        <strong>Differentiator:</strong> {productPlan.overview?.keyDifferentiator || productPlan.vision?.valueProposition || 'Unified AI developer workflow'}
                       </p>
                     </div>
                   </div>
@@ -541,7 +546,7 @@ export function ProductWorkspace({
                         Core Purpose
                       </h4>
                       <p className="text-xs text-slate-200 leading-relaxed">
-                        {productPlan.vision.purpose}
+                        {productPlan.vision?.purpose || 'Core purpose in definition.'}
                       </p>
                     </div>
 
@@ -550,7 +555,7 @@ export function ProductWorkspace({
                         Value Proposition
                       </h4>
                       <p className="text-xs text-slate-200 leading-relaxed">
-                        {productPlan.vision.valueProposition}
+                        {productPlan.vision?.valueProposition || 'Value proposition in definition.'}
                       </p>
                     </div>
 
@@ -559,7 +564,7 @@ export function ProductWorkspace({
                         Target Outcome & Success Metrics
                       </h4>
                       <p className="text-xs text-slate-200 leading-relaxed">
-                        {productPlan.vision.targetOutcome}
+                        {productPlan.vision?.targetOutcome || 'Target outcome in definition.'}
                       </p>
                     </div>
                   </div>
@@ -568,7 +573,7 @@ export function ProductWorkspace({
                 {/* 3. TARGET USERS / PERSONAS */}
                 {activeSection === 'personas' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {productPlan.personas.map((persona, idx) => (
+                    {(productPlan.personas || []).map((persona, idx) => (
                       <div
                         key={idx}
                         className="rounded-xl border border-white/10 bg-[#0f1128] p-5 space-y-3 shadow-md"
@@ -610,7 +615,7 @@ export function ProductWorkspace({
                         <span>MVP In-Scope (Must-Have)</span>
                       </div>
                       <ul className="space-y-2 text-xs text-slate-300">
-                        {productPlan.mvp.mustHave.map((item, i) => (
+                        {(productPlan.mvp?.mustHave || []).map((item, i) => (
                           <li key={i} className="flex items-start gap-2">
                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
                             <span>{item}</span>
@@ -626,7 +631,7 @@ export function ProductWorkspace({
                         <span>Out of Scope / Post-MVP Exclusions</span>
                       </div>
                       <ul className="space-y-2 text-xs text-slate-300">
-                        {productPlan.mvp.exclusions.map((item, i) => (
+                        {(productPlan.mvp?.exclusions || []).map((item, i) => (
                           <li key={i} className="flex items-start gap-2">
                             <span className="h-1.5 w-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
                             <span>{item}</span>
@@ -640,7 +645,7 @@ export function ProductWorkspace({
                 {/* 5. FEATURES */}
                 {activeSection === 'features' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {productPlan.features.map((feat) => (
+                    {(productPlan.features || []).map((feat) => (
                       <div
                         key={feat.id}
                         className="rounded-xl border border-white/10 bg-[#0f1128] p-5 space-y-2"
@@ -718,7 +723,7 @@ export function ProductWorkspace({
                 {/* 6. USER STORIES */}
                 {activeSection === 'stories' && (
                   <div className="space-y-4">
-                    {productPlan.userStories.map((story) => (
+                    {(productPlan.userStories || []).map((story) => (
                       <div
                         key={story.id}
                         className="rounded-xl border border-white/10 bg-[#0f1128] p-5 space-y-3"
@@ -774,7 +779,7 @@ export function ProductWorkspace({
                 {/* 8. ROADMAP */}
                 {activeSection === 'roadmap' && (
                   <div className="space-y-4">
-                    {productPlan.roadmap.map((phase, idx) => (
+                    {(productPlan.roadmap || []).map((phase, idx) => (
                       <div
                         key={idx}
                         className="rounded-xl border border-white/10 bg-[#0f1128] p-5 flex items-start gap-4"
@@ -1054,10 +1059,13 @@ export function ProductWorkspace({
       {/* IDEA INTAKE MODAL */}
       {/* ========================================================================= */}
       <Dialog open={showIdeaModal} onOpenChange={setShowIdeaModal}>
-        <DialogContent className="bg-[#0f1128] border-white/10 text-slate-100 sm:max-w-lg">
+        <DialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-white sm:max-w-lg p-6 overflow-hidden shadow-2xl">
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
           <DialogHeader>
             <DialogTitle className="text-sm font-bold flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-indigo-400" />
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-black shadow-sm overflow-hidden shrink-0">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
               <span>Describe Product Idea</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-400">
@@ -1071,16 +1079,16 @@ export function ProductWorkspace({
               onChange={(e) => setIdea(e.target.value)}
               placeholder="e.g. Build a modern SaaS Analytics Dashboard with dark mode, revenue charts, conversion funnels, activity feed, and responsive navigation."
               rows={4}
-              className="w-full resize-none rounded-xl border border-white/10 bg-black/50 p-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none transition"
+              className="w-full resize-none rounded-xl border border-white/15 bg-white/[0.05] p-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-white/30 focus:outline-none transition"
             />
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0 pt-1">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowIdeaModal(false)}
-              className="text-xs text-slate-400 hover:text-white"
+              className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
             >
               Cancel
             </Button>
@@ -1088,11 +1096,11 @@ export function ProductWorkspace({
               size="sm"
               onClick={handleGeneratePlan}
               disabled={isGeneratingPlan || !idea.trim()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs gap-1.5 font-medium shadow-sm"
+              className="bg-white hover:bg-slate-200 text-black text-xs gap-1.5 font-semibold px-5 h-9 rounded-full shadow-md cursor-pointer transition"
             >
               {isGeneratingPlan ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-black" />
                   <span>Architecting Specification…</span>
                 </>
               ) : (
@@ -1111,12 +1119,13 @@ export function ProductWorkspace({
       {/* ========================================================================= */}
       {selectedTaskForReqs && (
         <Dialog open={Boolean(selectedTaskForReqs)} onOpenChange={() => setSelectedTaskForReqs(null)}>
-          <DialogContent className="bg-[#0f1128] border-white/10 text-slate-100 sm:max-w-lg max-h-[85vh] flex flex-col">
+          <DialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-100 sm:max-w-lg max-h-[85vh] p-6 flex flex-col overflow-hidden shadow-2xl">
+            <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
             <DialogHeader>
               <div className="flex items-center gap-2">
                 <Badge
-                  variant="outline"
-                  className="text-[10px] border-indigo-500/30 bg-indigo-500/10 text-indigo-300 uppercase"
+                  variant="pill"
+                  className="text-[10px] uppercase font-mono"
                 >
                   {selectedTaskForReqs.type || selectedTaskForReqs.category}
                 </Badge>
@@ -1175,7 +1184,7 @@ export function ProductWorkspace({
                     {(selectedTaskForReqs.affectedFiles || []).map((file, idx) => (
                       <span
                         key={idx}
-                        className="font-mono text-[10px] rounded bg-white/5 border border-white/10 px-2 py-0.5 text-indigo-300"
+                        className="font-mono text-[10px] rounded-full bg-white/[0.06] border border-white/12 px-2.5 py-0.5 text-slate-200"
                       >
                         {file}
                       </span>
@@ -1185,12 +1194,12 @@ export function ProductWorkspace({
               </div>
             </ScrollArea>
 
-            <DialogFooter className="pt-2 border-t border-white/5">
+            <DialogFooter className="pt-2 border-t border-white/5 gap-2 sm:gap-0">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setSelectedTaskForReqs(null)}
-                className="text-xs text-slate-400 hover:text-white"
+                className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
               >
                 Close
               </Button>
@@ -1201,7 +1210,7 @@ export function ProductWorkspace({
                   setSelectedTaskForReqs(null);
                   void handleBuildFeature(task);
                 }}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs gap-1.5 font-medium shadow-sm"
+                className="bg-white hover:bg-slate-200 text-black text-xs gap-1.5 font-semibold px-5 h-9 rounded-full shadow-md cursor-pointer transition"
               >
                 <Zap className="h-3 w-3" />
                 <span>Build This Feature</span>

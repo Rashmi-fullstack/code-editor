@@ -102,11 +102,14 @@ export function DiagnosticsModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[80vh] flex flex-col bg-[#0b0c16] border-white/10 text-slate-200 p-0 overflow-hidden shadow-2xl">
-        <DialogHeader className="p-4 pb-2 border-b border-white/10 shrink-0">
+      <DialogContent className="max-w-4xl h-[80vh] flex flex-col rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-200 p-0 overflow-hidden shadow-2xl">
+        {/* Top specular highlight line */}
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
+
+        <DialogHeader className="p-4 pb-3 border-b border-white/10 shrink-0">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-black shadow-md overflow-hidden shrink-0">
                 <Activity className="h-4 w-4" />
               </div>
               <div>
@@ -120,13 +123,13 @@ export function DiagnosticsModal({
             </div>
 
             {/* Tab Switcher */}
-            <div className="flex items-center rounded-lg border border-white/10 bg-black/40 p-0.5 gap-1 mr-6">
+            <div className="flex items-center rounded-full border border-white/12 bg-[#28282a] p-1 gap-1 mr-6">
               <button
                 type="button"
                 onClick={() => setTab('logs')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
                   tab === 'logs'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-white text-black font-semibold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -136,9 +139,9 @@ export function DiagnosticsModal({
               <button
                 type="button"
                 onClick={() => setTab('runtime')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
                   tab === 'runtime'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-white text-black font-semibold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -148,9 +151,9 @@ export function DiagnosticsModal({
               <button
                 type="button"
                 onClick={() => setTab('dependencies')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
                   tab === 'dependencies'
-                    ? 'bg-indigo-600 text-white shadow-sm'
+                    ? 'bg-white text-black font-semibold shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -279,7 +282,7 @@ export function DiagnosticsModal({
                         window.open(`/preview?project=${encodeURIComponent(pid)}`, '_blank');
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition cursor-pointer"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-white text-xs font-semibold border border-white/15 transition cursor-pointer"
                   >
                     <span>Open in new window</span>
                     <ExternalLink className="h-3 w-3" />
@@ -291,7 +294,7 @@ export function DiagnosticsModal({
                 <Button
                   size="sm"
                   onClick={handleRestartRuntime}
-                  className="h-7 text-xs bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5"
+                  className="h-8 text-xs rounded-full bg-white hover:bg-slate-200 text-black font-semibold px-4 gap-1.5 shadow-md cursor-pointer transition"
                 >
                   <RotateCcw className="h-3 w-3" />
                   <span>Restart Dev Server</span>
@@ -303,7 +306,7 @@ export function DiagnosticsModal({
                     webcontainerManager.stopAll();
                     toast.success('Runtime stopped');
                   }}
-                  className="h-7 text-xs border-white/10 text-slate-300 hover:bg-white/10"
+                  className="h-8 text-xs rounded-full border-white/15 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white px-4 cursor-pointer transition"
                 >
                   <span>Stop Server</span>
                 </Button>

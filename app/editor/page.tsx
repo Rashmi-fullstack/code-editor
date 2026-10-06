@@ -34,6 +34,8 @@ import {
 } from '@/components/editor/editor-tab-bar';
 import { TerminalPanel } from '@/components/editor/terminal-panel';
 import { DiagnosticsModal } from '@/components/editor/diagnostics-modal';
+import { useCredits } from '@/components/credit-provider';
+import { CreditExhaustionDialog } from '@/components/credits/credit-exhaustion-dialog';
 import { webcontainerManager, stripAnsi } from '@/lib/runtime/webcontainer-manager';
 import { StatusBar } from '@/components/editor/status-bar';
 import { CommandPalette } from '@/components/editor/command-palette';
@@ -46,6 +48,7 @@ import {
   getProjectById,
   getProjectFiles,
   getProjects,
+  createProjectWithMode,
   updateProject,
   saveProjectFile,
   batchUpsertFiles,
@@ -75,7 +78,7 @@ type AgentResponse = {
   isFallback?: boolean;
 };
 
-export type ProjectStatus = 'loading' | 'empty' | 'ready' | 'error';
+export type ProjectStatus = 'loading' | 'empty' | 'ready' | 'error' | 'not_found' | 'no_project';
 
 export type EditorLifecycleState =
   | 'ROUTE_LOADING'
@@ -141,6 +144,10 @@ function EditorPageContent() {
   const [splitPercent, setSplitPercent] = useState(50);
   const [terminalHeight, setTerminalHeight] = useState(200);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Credit quota and upgrade state
+  const { refreshCredits, creditsRemaining, isAdmin: isUserAdmin } = useCredits();
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // AI Conversation & Stage state
   const [conversation, setConversation] = useState<AiMessage[]>([]);
@@ -356,11 +363,11 @@ function EditorPageContent() {
   const handleWorkspaceChange = useCallback(
     (newWs: 'developer' | 'product') => {
       setWorkspace(newWs);
-      if (typeof window !== 'undefined' && project) {
-        window.history.replaceState(null, '', `?project=${project.id}&view=${newWs}`);
+      if (project) {
+        router.replace(`/editor?project=${project.id}&view=${newWs}`, { scroll: false });
       }
     },
-    [project]
+    [project, router]
   );
 
   const handleSwitchToDeveloper = useCallback(
@@ -636,43 +643,62 @@ function EditorPageContent() {
             current = fetchedProject.data;
             perfTimersRef.current.projectFetchEnd = Date.now();
             webcontainerManager.logInternal('PROJECT', 'project metadata loaded');
+            if (fetchedFiles.data) {
+              projectFiles = fetchedFiles.data;
+              perfTimersRef.current.filesFetchEnd = Date.now();
+              webcontainerManager.logInternal('PROJECT', `files loaded: ${projectFiles.length} files`);
+            }
+          } else {
+            // Explicit PROJECT_NOT_FOUND state for non-existent requested project
+            setProject(null);
+            setFiles([]);
+            setOpenTabs([]);
+            setActivePath('');
+            setProjectStatus('not_found');
+            transitionLifecycle('FAILED', `Project ${queryPid} not found`);
+            webcontainerManager.logInternal('PROJECT', `project not found: ${queryPid}`);
+            return;
           }
-          if (fetchedFiles.data) {
-            projectFiles = fetchedFiles.data;
-            perfTimersRef.current.filesFetchEnd = Date.now();
-            webcontainerManager.logInternal('PROJECT', `files loaded: ${projectFiles.length} files`);
-          }
-        }
-
-        if (!current) {
+        } else {
+          // No project ID in URL: Check the user's project list
           const projects = await getProjects(supabase, user.id);
           if (!active || currentSeq !== loadSeqRef.current) return;
-          current = projects.data?.[0] ?? null;
-          if (current) {
-            const fetchedFiles = await getProjectFiles(supabase, current.id);
-            if (!active || currentSeq !== loadSeqRef.current) return;
-            projectFiles = fetchedFiles.data ?? [];
+          if (!projects.data || projects.data.length === 0) {
+            // User has 0 projects: First-time user empty state (NO_PROJECT)
+            setProject(null);
+            setFiles([]);
+            setOpenTabs([]);
+            setActivePath('');
+            setConversation([]);
+            setProjectStatus('no_project');
+            transitionLifecycle('EDITOR_READY', 'First-time user (no projects)');
+            webcontainerManager.logInternal('PROJECT', 'no projects found (empty state)');
+            return;
           }
+
+          current = projects.data[0];
+          const fetchedFiles = await getProjectFiles(supabase, current.id);
+          if (!active || currentSeq !== loadSeqRef.current) return;
+          projectFiles = fetchedFiles.data ?? [];
         }
 
         if (!current) {
-          if (active && currentSeq === loadSeqRef.current) {
-            router.push('/projects');
-          }
+          setProject(null);
+          setFiles([]);
+          setProjectStatus('no_project');
+          transitionLifecycle('EDITOR_READY', 'No project loaded');
           return;
         }
 
         // Synchronize URL and workspace view mode
         const activeView = (queryView === 'product' || queryView === 'developer') ? queryView : 'developer';
         setWorkspace(activeView);
-        if (typeof window !== 'undefined') {
-          const targetSearch = `?project=${current.id}&view=${activeView}`;
-          if (window.location.search !== targetSearch) {
-            window.history.replaceState(null, '', targetSearch);
-          }
+        if (queryPid !== current.id || queryView !== activeView) {
+          router.replace(`/editor?project=${current.id}&view=${activeView}`, { scroll: false });
         }
 
         setProject(current);
+        hydratedTargetRef.current = `${user ? user.id : 'anon'}_${current.id}`;
         try {
           localStorage.setItem(`codatron_project_${current.id}`, JSON.stringify(current));
         } catch { }
@@ -980,10 +1006,9 @@ function EditorPageContent() {
       }
 
       if (project.id !== 'local-project') {
-        await supabase
-          .from('projects')
-          .update({ updated_at: new Date().toISOString() })
-          .eq('id', project.id);
+        await updateProject(supabase, project.id, {
+          updated_at: new Date().toISOString(),
+        });
       }
 
       setLastSavedAt(new Date());
@@ -1132,7 +1157,29 @@ function EditorPageContent() {
     }
   ) => {
     const effectivePrompt = overridePrompt || prompt;
-    if (!project || !effectivePrompt.trim()) return;
+    if (!effectivePrompt.trim()) return;
+
+    let targetProject = project;
+    if (!targetProject) {
+      setIsWorking(true);
+      setGenerationStage('Creating your first project…');
+      const derivedName = effectivePrompt.slice(0, 32).trim() || 'My First Project';
+      const createRes = await createProjectWithMode(supabase, user ? user.id : 'anon', {
+        name: derivedName,
+        mode: 'developer',
+        framework: 'nextjs',
+      });
+      if (createRes.error || !createRes.data) {
+        toast.error(createRes.error?.message || 'Could not create project');
+        setIsWorking(false);
+        setGenerationStage(undefined);
+        return;
+      }
+      targetProject = createRes.data;
+      setProject(targetProject);
+      setProjectStatus('empty');
+      router.replace(`/editor?project=${targetProject.id}&view=${workspace}`, { scroll: false });
+    }
 
     const modeToUse = targetAiMode || aiMode;
     const isSilent = Boolean(options?.isSilentSelfHeal);
@@ -1231,7 +1278,7 @@ function EditorPageContent() {
 
     setConversation(newMessages);
     try {
-      localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(newMessages));
+      localStorage.setItem(`codatron_chat_${targetProject.id}`, JSON.stringify(newMessages));
     } catch { }
 
     try {
@@ -1246,13 +1293,13 @@ function EditorPageContent() {
               : msg
           );
           try {
-            localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(next));
+            localStorage.setItem(`codatron_chat_${targetProject.id}`, JSON.stringify(next));
           } catch { }
           return next;
         });
       }
 
-      const response = await fetch(`/api/projects/${project.id}/generate`, {
+      const response = await fetch(`/api/projects/${targetProject.id}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1267,6 +1314,7 @@ function EditorPageContent() {
             role: m.role,
             content: m.content,
           })),
+          isInternalRepair: Boolean(options?.isSilentSelfHeal),
         }),
       });
 
@@ -1274,8 +1322,20 @@ function EditorPageContent() {
         message?: string;
         plan?: string[];
         cleanupReport?: { removedFiles: string[]; removedDeps: string[] };
+        code?: string;
+        upgradeRequired?: boolean;
       };
-      if (!response.ok) throw new Error(body.message || 'Generation failed.');
+      if (!response.ok) {
+        if (body.code === 'INSUFFICIENT_CREDITS' || body.upgradeRequired) {
+          const creditErr = new Error(body.message || "You've used your Codatron AI credits. Upgrade your plan to continue building with AI.");
+          (creditErr as unknown as { isCreditExhausted: boolean }).isCreditExhausted = true;
+          throw creditErr;
+        }
+        throw new Error(body.message || 'Generation failed.');
+      }
+
+      // Re-synchronize authoritative credit balance on successful generation
+      void refreshCredits();
 
       const genMs = performance.now() - perfMetricsRef.current.startTime;
       perfMetricsRef.current.generationMs = genMs;
@@ -1319,7 +1379,7 @@ function EditorPageContent() {
               : msg
           );
           try {
-            localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(next));
+            localStorage.setItem(`codatron_chat_${targetProject.id}`, JSON.stringify(next));
           } catch { }
           return next;
         });
@@ -1328,14 +1388,14 @@ function EditorPageContent() {
       const nextFiles = body.files ?? [];
       setFiles(nextFiles);
       setProjectStatus(nextFiles.length > 0 ? 'ready' : 'empty');
-      persistFilesToCache(project.id, nextFiles);
+      persistFilesToCache(targetProject.id, nextFiles);
       setDependencies(body.dependencies ?? []);
 
       // Keep clean user-facing Codatron AI identity
       setActiveAiDisplayName('Codatron AI');
 
       // If a project name was derived from first build, update project state
-      if (body.projectName && body.projectName !== project.name) {
+      if (body.projectName && body.projectName !== targetProject.name) {
         setProject((prev) => (prev ? { ...prev, name: body.projectName! } : prev));
       }
 
@@ -1379,7 +1439,7 @@ function EditorPageContent() {
           webcontainerManager.logInternal('RUNTIME', 'booting dev server');
         }
 
-        await webcontainerManager.runProject(nextFiles, project.id);
+        await webcontainerManager.runProject(nextFiles, targetProject.id);
         transitionBuildState('COMPILING', 'compiling application');
       }
 
@@ -1426,7 +1486,7 @@ function EditorPageContent() {
             : msg
         );
         try {
-          localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(next));
+          localStorage.setItem(`codatron_chat_${targetProject.id}`, JSON.stringify(next));
         } catch { }
         return next;
       });
@@ -1445,7 +1505,39 @@ function EditorPageContent() {
       }
     } catch (cause) {
       const errMsg = cause instanceof Error ? cause.message : 'Generation failed.';
-      console.error('[AI Generation/Repair Error]', errMsg);
+      // Log full technical error details for developer root-cause diagnosis without triggering Turbopack red modal
+      console.log('[AI Generation Debug]', {
+        error: errMsg,
+        cause,
+        projectId: targetProject?.id,
+        timestamp: new Date().toISOString(),
+      });
+
+      const lower = errMsg.toLowerCase();
+      const isCreditError =
+        (cause && typeof cause === 'object' && 'isCreditExhausted' in cause) ||
+        lower.includes('credit') ||
+        lower.includes('insufficient_credits') ||
+        lower.includes('credit limit') ||
+        lower.includes('no ai credits');
+
+      let userFriendlyMsg = 'Generation could not be completed. Please try again or refine your prompt.';
+      if (isCreditError) {
+        userFriendlyMsg = "You've used your Codatron AI credits. Upgrade your plan to continue building with AI.";
+        if (!isSilent) {
+          setShowUpgradeModal(true);
+        }
+        void refreshCredits();
+      } else if (lower.includes('quota') || lower.includes('429') || lower.includes('billing')) {
+        userFriendlyMsg = 'AI service is currently at quota limit. Please try again shortly or add a personal API key.';
+      } else if (lower.includes('auth') || lower.includes('permission') || lower.includes('api key') || lower.includes('401') || lower.includes('403')) {
+        userFriendlyMsg = 'AI provider authentication issue. Please check your API key in Profile or try again.';
+      } else if (lower.includes('unavailable') || lower.includes('503') || lower.includes('500') || lower.includes('network') || lower.includes('fetch failed')) {
+        userFriendlyMsg = 'AI service is temporarily busy. Please try again in a few moments.';
+      } else if (errMsg.length < 100) {
+        userFriendlyMsg = errMsg;
+      }
+
       setGenerationStage(undefined);
       setConversation((prev) => {
         const next = prev.map((msg) =>
@@ -1456,19 +1548,21 @@ function EditorPageContent() {
               error: errMsg,
               content: isSilent
                 ? "I couldn't finish this change automatically. You can ask me to try again or open Diagnostics for details."
-                : `Generation failed: ${errMsg}`,
+                : userFriendlyMsg,
               isExhaustedRetry: isSilent,
             }
             : msg
         );
         try {
-          localStorage.setItem(`codatron_chat_${project.id}`, JSON.stringify(next));
+          if (targetProject) {
+            localStorage.setItem(`codatron_chat_${targetProject.id}`, JSON.stringify(next));
+          }
         } catch { }
         return next;
       });
 
       if (!isSilent) {
-        toast.error(errMsg);
+        toast.error(userFriendlyMsg);
       }
     } finally {
       setIsWorking(false);
@@ -1785,7 +1879,7 @@ function EditorPageContent() {
     return {
       id: queryPid || 'local-project',
       user_id: user?.id || 'anonymous',
-      name: queryPid ? 'Project Workspace' : 'Local Project',
+      name: projectStatus === 'no_project' ? 'New Project' : queryPid ? 'Project Workspace' : 'Local Project',
       description: '',
       prompt: null,
       framework: 'nextjs',
@@ -1793,7 +1887,7 @@ function EditorPageContent() {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-  }, [project, queryPid, user?.id]);
+  }, [project, projectStatus, queryPid, user?.id]);
 
   return (
     <main className="flex h-screen flex-col bg-[#02060f] text-slate-100 overflow-hidden select-none">
@@ -1836,8 +1930,23 @@ function EditorPageContent() {
               </div>
             </div>
             <div className="text-center space-y-1">
-              <p className="text-sm font-semibold text-slate-200">Opening your project...</p>
+              <p className="text-sm font-semibold text-slate-200">Loading your project...</p>
               <p className="text-xs text-slate-400">Loading your workspace...</p>
+            </div>
+          </div>
+        ) : projectStatus === 'not_found' && !project ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
+            <div className="flex flex-col items-center gap-3 text-center px-4 max-w-sm">
+              <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <FileQuestion className="h-5 w-5" />
+              </div>
+              <p className="text-sm text-slate-200 font-semibold">We couldn&apos;t find this project.</p>
+              <p className="text-xs text-slate-400">This project does not exist or may have been deleted.</p>
+              <div className="flex items-center gap-2 mt-2">
+                <Button size="sm" variant="outline" className="text-xs" onClick={() => router.push('/projects')}>
+                  Back to Projects
+                </Button>
+              </div>
             </div>
           </div>
         ) : projectStatus === 'error' && !project ? (
@@ -1846,10 +1955,10 @@ function EditorPageContent() {
               <div className="h-10 w-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
                 <FileQuestion className="h-5 w-5" />
               </div>
-              <p className="text-sm text-slate-200 font-semibold">We couldn&apos;t open this project.</p>
+              <p className="text-sm text-slate-200 font-semibold">We couldn&apos;t load this project right now.</p>
               <p className="text-xs text-slate-400">We&apos;re taking a little longer to load your project. You can try again or return to your projects hub.</p>
               <div className="flex items-center gap-2 mt-2">
-                <Button size="sm" variant="outline" className="text-xs" onClick={() => setReloadTrigger((prev) => prev + 1)}>
+                <Button size="sm" variant="outline" className="text-xs" onClick={() => retryHydration()}>
                   Try again
                 </Button>
                 <Button size="sm" variant="ghost" className="text-xs text-slate-400 hover:text-white" onClick={() => router.push('/projects')}>
@@ -1920,6 +2029,7 @@ function EditorPageContent() {
                   onEditMessage={handleEditMessage}
                   onRegenerateMessage={handleRegenerateMessage}
                   isChatLoading={isChatLoading}
+                  isNoProject={projectStatus === 'no_project'}
                 />
               </div>
             )}
@@ -1969,8 +2079,28 @@ function EditorPageContent() {
                         <Loader2 className="h-7 w-7 animate-spin text-indigo-400" />
                       </div>
                       <div className="space-y-1.5">
-                        <h3 className="text-base font-semibold text-slate-100">Opening your project...</h3>
+                        <h3 className="text-base font-semibold text-slate-100">Loading your project...</h3>
                         <p className="text-xs text-slate-400">Loading your workspace...</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PROJECT NOT FOUND */}
+                {projectStatus === 'not_found' && files.length === 0 && (
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
+                    <div className="max-w-md mx-auto space-y-4">
+                      <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                        <FileQuestion className="h-7 w-7" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <h3 className="text-base font-semibold text-slate-100">We couldn&apos;t find this project.</h3>
+                        <p className="text-xs text-slate-400">This project does not exist or may have been deleted.</p>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 pt-2">
+                        <Button size="sm" variant="outline" className="text-xs" onClick={() => router.push('/projects')}>
+                          Back to Projects
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -1984,11 +2114,11 @@ function EditorPageContent() {
                         <FileQuestion className="h-7 w-7" />
                       </div>
                       <div className="space-y-1.5">
-                        <h3 className="text-base font-semibold text-slate-100">We couldn&apos;t open this project.</h3>
+                        <h3 className="text-base font-semibold text-slate-100">We couldn&apos;t load this project right now.</h3>
                         <p className="text-xs text-slate-400">We&apos;re taking a little longer to load your project. You can try again or return to your projects hub.</p>
                       </div>
                       <div className="flex items-center justify-center gap-2 pt-2">
-                        <Button size="sm" variant="outline" className="text-xs" onClick={() => setReloadTrigger((prev) => prev + 1)}>
+                        <Button size="sm" variant="outline" className="text-xs" onClick={() => retryHydration()}>
                           Try again
                         </Button>
                         <Button size="sm" variant="ghost" className="text-xs text-slate-400 hover:text-white" onClick={() => router.push('/projects')}>
@@ -1999,12 +2129,29 @@ function EditorPageContent() {
                   </div>
                 )}
 
-                {/* PREVIEW EMPTY CANVAS (AI App Builder Placeholder when no files yet) */}
-                {projectStatus !== 'loading' && projectStatus !== 'error' && viewMode === 'preview' && files.length === 0 && (
+                {/* FIRST-TIME USER EMPTY STATE (When user has no projects yet) */}
+                {projectStatus === 'no_project' && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">
-                        <Sparkles className="h-7 w-7 text-indigo-400 animate-pulse" />
+                        <Sparkles className="h-7 w-7 text-indigo-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-white">Start building with AI</h3>
+                        <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                          You don&apos;t have a project yet. Describe what you&apos;d like to build in the AI Workspace on the left, and Codatron will create your first project and live preview automatically.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PREVIEW EMPTY CANVAS (For existing project with 0 files) */}
+                {projectStatus !== 'loading' && projectStatus !== 'error' && projectStatus !== 'not_found' && projectStatus !== 'no_project' && viewMode === 'preview' && files.length === 0 && (
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
+                    <div className="max-w-md mx-auto space-y-4">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">
+                        <Sparkles className="h-7 w-7 text-indigo-400" />
                       </div>
                       <div>
                         <h3 className="text-base font-bold text-white">
@@ -2013,38 +2160,6 @@ function EditorPageContent() {
                         <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
                           Your live application preview will appear here automatically. Describe the application you want to build in the AI Workspace on the left.
                         </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2 justify-center pt-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPrompt('Build a Netflix clone with dark theme, hero banner, movie rows, search, and demo data');
-                            setShowAiPanel(true);
-                          }}
-                          className="text-[11px] rounded-lg border border-indigo-500/30 bg-indigo-950/30 hover:bg-indigo-950/60 px-3 py-1.5 text-indigo-300 transition"
-                        >
-                          🎬 Netflix Clone
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPrompt('Build a SaaS analytics dashboard with chart widgets, KPI metric cards, and dark mode');
-                            setShowAiPanel(true);
-                          }}
-                          className="text-[11px] rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] px-3 py-1.5 text-slate-300 transition"
-                        >
-                          📊 SaaS Analytics Dashboard
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPrompt('Build an e-commerce storefront with cart drawer, product grid, and category filters');
-                            setShowAiPanel(true);
-                          }}
-                          className="text-[11px] rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] px-3 py-1.5 text-slate-300 transition"
-                        >
-                          🛍️ E-commerce Store
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -2425,6 +2540,15 @@ function EditorPageContent() {
         onErrorDetected={(err) => setPreviewError(err)}
         onFixWithAI={fixWithAI}
         projectId={project?.id || queryPid || 'local-project'}
+      />
+
+      {/* Credit Exhaustion & Upgrade Modal */}
+      <CreditExhaustionDialog
+        open={showUpgradeModal}
+        onOpenChange={setShowUpgradeModal}
+        remainingCredits={creditsRemaining}
+        requiredCredits={10}
+        projectId={project?.id || queryPid || undefined}
       />
     </main>
   );

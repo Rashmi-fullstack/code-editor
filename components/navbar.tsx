@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
 import { useAuth } from '@/components/auth-provider';
+import { GlobalUserMenu } from '@/components/layout/global-user-menu';
 
 const NAV_LINKS = [
   { label: 'Roles', href: '#roles' },
@@ -12,7 +13,6 @@ const NAV_LINKS = [
   { label: 'How It Works', href: '#how-it-works' },
 ] as const;
 
-const LOGIN_HREF = '/login';
 const GET_STARTED_HREF = '/signup';
 
 export default function Navbar() {
@@ -127,44 +127,27 @@ export default function Navbar() {
             ========================================================================= */}
         <div className="pointer-events-auto hidden md:flex items-center gap-2.5 flex-shrink-0">
           {!isLoading && user ? (
-            <div className="h-[50px] sm:h-[54px] rounded-full bg-[#28282a] text-[#c8c8c8] shadow-[0_4px_16px_rgba(0,0,0,0.18)] px-5 flex items-center gap-3.5 text-[13.5px] font-sans font-medium border border-white/10">
+            <div className="flex items-center gap-2.5">
               <Link
                 href="/projects"
-                className="text-[#c8c8c8] hover:text-white transition-colors whitespace-nowrap"
+                className="h-[50px] sm:h-[54px] rounded-full bg-[#28282a] text-[#c8c8c8] hover:text-white hover:bg-[#323234] shadow-[0_4px_16px_rgba(0,0,0,0.18)] px-5 sm:px-6 flex items-center justify-center font-sans font-medium text-[14px] sm:text-[14.5px] transition-all hover:-translate-y-0.5 border border-white/10"
               >
-                My Projects
+                Projects
               </Link>
-              <span className="w-px h-4 bg-white/15" />
-              <Link
-                href="/profile"
-                className="max-w-[130px] truncate text-[#c8c8c8] hover:text-white transition-colors"
-                title="View Profile & Settings"
-              >
-                {user.name || 'Profile'}
-              </Link>
-              <span className="w-px h-4 bg-white/15" />
-              <button
-                onClick={() => void logout()}
-                className="text-[#8e8e8e] hover:text-white transition-colors cursor-pointer whitespace-nowrap"
-              >
-                Log out
-              </button>
               <Link
                 href="/editor?view=developer"
-                className="h-[36px] px-4 rounded-full bg-white text-black hover:bg-slate-200 transition-all font-semibold text-xs inline-flex items-center gap-1.5 shadow-sm hover:scale-[1.02] whitespace-nowrap"
+                className="h-[50px] sm:h-[54px] rounded-full bg-white text-black hover:bg-slate-200 shadow-[0_4px_16px_rgba(0,0,0,0.18)] px-5 sm:px-6 flex items-center justify-center font-sans font-semibold text-[14px] sm:text-[14.5px] transition-all hover:-translate-y-0.5 gap-2"
               >
-                Open Editor
-                <ArrowRight className="h-3.5 w-3.5" />
+                <span>Open Editor</span>
+                <ArrowRight className="h-4 w-4" />
               </Link>
+              <GlobalUserMenu
+                showTriggerLabel={false}
+                className="h-[50px] sm:h-[54px] px-3.5 rounded-full bg-[#28282a] hover:bg-[#323234] border border-white/10 shadow-[0_4px_16px_rgba(0,0,0,0.18)] transition-all hover:-translate-y-0.5"
+              />
             </div>
           ) : (
             <div className="flex items-center gap-2.5">
-              <Link
-                href={LOGIN_HREF}
-                className="h-[50px] sm:h-[54px] rounded-full bg-[#28282a] text-[#c8c8c8] hover:text-white hover:bg-[#323234] shadow-[0_4px_16px_rgba(0,0,0,0.18)] px-6 flex items-center justify-center font-sans font-medium text-[14.5px] transition-all hover:-translate-y-0.5 border border-white/10"
-              >
-                Sign in
-              </Link>
               <Link
                 href={GET_STARTED_HREF}
                 className="h-[50px] sm:h-[54px] rounded-full bg-white text-black hover:bg-slate-200 shadow-[0_4px_16px_rgba(0,0,0,0.18)] px-6 flex items-center justify-center font-sans font-semibold text-[14.5px] transition-all hover:-translate-y-0.5"
@@ -256,15 +239,16 @@ export default function Navbar() {
               <div className="pt-3 border-t border-white/10 flex flex-col gap-2.5">
                 {!isLoading && user ? (
                   <>
-                    <div className="px-3 py-1 text-xs text-[#a1a1aa]">
-                      Signed in as <span className="text-white font-medium">{user.name}</span>
+                    <div className="flex items-center justify-between px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/10 text-xs">
+                      <span className="text-slate-400">Signed in</span>
+                      <span className="text-white font-medium truncate max-w-[160px]">{user.name || user.email}</span>
                     </div>
                     <Link
                       href="/projects"
                       onClick={() => setMobileOpen(false)}
-                      className="w-full py-3 text-center text-sm font-medium text-white rounded-full bg-white/[0.08] hover:bg-white/[0.14] transition-colors"
+                      className="w-full py-3 text-center text-sm font-medium text-white rounded-full bg-[#28282a] border border-white/10 hover:bg-[#323234] transition-colors"
                     >
-                      My Projects
+                      Projects
                     </Link>
                     <Link
                       href="/editor?view=developer"
@@ -273,33 +257,33 @@ export default function Navbar() {
                     >
                       Open Editor
                     </Link>
-                    <button
-                      onClick={() => {
-                        setMobileOpen(false);
-                        void logout();
-                      }}
-                      className="w-full py-2.5 text-center text-xs text-[#8e8e8e] hover:text-white transition-colors"
-                    >
-                      Log out
-                    </button>
+                    <div className="flex items-center justify-between px-4 pt-1">
+                      <Link
+                        href="/profile"
+                        onClick={() => setMobileOpen(false)}
+                        className="text-xs text-slate-400 hover:text-white transition-colors"
+                      >
+                        Profile & Settings
+                      </Link>
+                      <button
+                        onClick={() => {
+                          setMobileOpen(false);
+                          void logout();
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 transition-colors cursor-pointer"
+                      >
+                        Log out
+                      </button>
+                    </div>
                   </>
                 ) : (
-                  <>
-                    <Link
-                      href={LOGIN_HREF}
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3 text-center text-sm font-medium text-white rounded-full bg-[#28282a] border border-white/10 hover:bg-[#323234] transition-colors"
-                    >
-                      Sign in
-                    </Link>
-                    <Link
-                      href={GET_STARTED_HREF}
-                      onClick={() => setMobileOpen(false)}
-                      className="w-full py-3 text-center text-sm font-semibold text-black rounded-full bg-white hover:bg-slate-200 transition-colors shadow-md"
-                    >
-                      Get Started
-                    </Link>
-                  </>
+                  <Link
+                    href={GET_STARTED_HREF}
+                    onClick={() => setMobileOpen(false)}
+                    className="w-full py-3 text-center text-sm font-semibold text-black rounded-full bg-white hover:bg-slate-200 transition-colors shadow-md"
+                  >
+                    Get Started
+                  </Link>
                 )}
               </div>
             </motion.div>

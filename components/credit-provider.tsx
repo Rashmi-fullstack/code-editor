@@ -7,40 +7,59 @@ export interface CreditState {
   creditsRemaining: number;
   creditLimit: number;
   creditsUsed: number;
+  isAdmin: boolean;
   isLoading: boolean;
   refreshCredits: () => Promise<void>;
   fetchCredits: () => Promise<void>;
-  consumeCreditOptimistic: () => void;
+  consumeCreditOptimistic: (amount?: number) => void;
 }
 
 const CreditContext = createContext<CreditState | null>(null);
 
 export function CreditProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const [creditLimit, setCreditLimit] = useState(4);
+  const [creditLimit, setCreditLimit] = useState(100);
   const [creditsUsed, setCreditsUsed] = useState(0);
-  const [creditsRemaining, setCreditsRemaining] = useState(4);
+  const [creditsRemaining, setCreditsRemaining] = useState(100);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  const applyCreditData = useCallback(
+    (data: {
+      limit?: number;
+      used?: number;
+      remaining?: number;
+      isAdmin?: boolean;
+      isUnlimited?: boolean;
+    }) => {
+      // Authoritative server-side determination from /api/profile/credits
+      const isUserAdmin = Boolean(data.isAdmin || data.isUnlimited);
+      setIsAdmin(isUserAdmin);
+      setCreditLimit(isUserAdmin ? -1 : typeof data.limit === 'number' ? data.limit : 100);
+      setCreditsUsed(typeof data.used === 'number' ? data.used : 0);
+      setCreditsRemaining(isUserAdmin ? -1 : typeof data.remaining === 'number' ? data.remaining : 100);
+    },
+    []
+  );
 
   const refreshCredits = useCallback(async () => {
     if (!user) {
-      setCreditsRemaining(4);
-      setCreditLimit(4);
+      setCreditsRemaining(100);
+      setCreditLimit(100);
       setCreditsUsed(0);
+      setIsAdmin(false);
       return;
     }
     try {
       const res = await fetch('/api/profile/credits', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        setCreditLimit(typeof data.limit === 'number' ? data.limit : 4);
-        setCreditsUsed(typeof data.used === 'number' ? data.used : 0);
-        setCreditsRemaining(typeof data.remaining === 'number' ? data.remaining : 4);
+        applyCreditData(data);
       }
     } catch {
       // Non-critical
     }
-  }, [user]);
+  }, [user, applyCreditData]);
 
   // Alias fetchCredits to refreshCredits for full compatibility
   const fetchCredits = refreshCredits;
@@ -52,26 +71,31 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!ignore && data) {
-            setCreditLimit(typeof data.limit === 'number' ? data.limit : 4);
-            setCreditsUsed(typeof data.used === 'number' ? data.used : 0);
-            setCreditsRemaining(typeof data.remaining === 'number' ? data.remaining : 4);
+            applyCreditData(data);
           }
         })
         .catch(() => {})
         .finally(() => {
           if (!ignore) setIsLoading(false);
         });
+    } else {
+      setIsLoading(false);
     }
 
     return () => {
       ignore = true;
     };
-  }, [user]);
+  }, [user, applyCreditData]);
 
-  const consumeCreditOptimistic = useCallback(() => {
-    setCreditsRemaining((prev) => Math.max(0, prev - 1));
-    setCreditsUsed((prev) => prev + 1);
-  }, []);
+  const consumeCreditOptimistic = useCallback(
+    (amount: number = 10) => {
+      if (isAdmin) return; // Admin bypasses Codatron credit counter
+      const dec = Math.max(1, amount);
+      setCreditsRemaining((prev) => Math.max(0, prev - dec));
+      setCreditsUsed((prev) => prev + dec);
+    },
+    [isAdmin]
+  );
 
   return (
     <CreditContext.Provider
@@ -79,6 +103,7 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
         creditsRemaining,
         creditLimit,
         creditsUsed,
+        isAdmin,
         isLoading,
         refreshCredits,
         fetchCredits,
@@ -95,9 +120,10 @@ export function useCredits() {
   if (!ctx) {
     // Graceful fallback for components outside provider
     return {
-      creditsRemaining: 4,
-      creditLimit: 4,
+      creditsRemaining: 100,
+      creditLimit: 100,
       creditsUsed: 0,
+      isAdmin: false,
       isLoading: false,
       refreshCredits: async () => {},
       fetchCredits: async () => {},

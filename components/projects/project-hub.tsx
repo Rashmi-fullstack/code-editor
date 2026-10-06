@@ -204,18 +204,21 @@ export function ProjectHub() {
   }, [projects, searchQuery, activeTab, sortBy]);
 
   return (
-    <div className="flex h-screen w-full flex-col bg-[#02060f] text-slate-100 overflow-hidden select-none">
+    <div className="flex h-screen w-full flex-col bg-[#000] text-slate-100 overflow-hidden select-none relative">
+      {/* Subtle atmospheric glow background */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.12),rgba(255,255,255,0))] z-0" />
+
       {/* ========================================================================= */}
       {/* TOP APPLICATION BAR */}
       {/* ========================================================================= */}
-      <header className="h-14 shrink-0 border-b border-white/10 bg-[#060a12]/90 backdrop-blur-xl px-5 flex items-center justify-between z-20">
+      <header className="h-14 shrink-0 border-b border-white/10 bg-black/40 backdrop-blur-xl px-5 flex items-center justify-between z-20">
         <div className="flex items-center gap-3">
           <Link
             href="/"
-            className="group flex items-center gap-2 rounded-lg py-1 text-sm font-semibold text-white transition hover:opacity-90"
+            className="group flex items-center gap-2.5 rounded-full py-1 text-sm font-semibold text-white transition hover:opacity-90"
           >
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20">
-              <Sparkles className="h-4 w-4 text-white" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-md overflow-hidden shrink-0">
+              <img src="/assets/logo.webp" alt="Codatron" className="h-5 w-5 object-contain" />
             </span>
             <span className="font-bold tracking-tight text-white">Codatron.ai</span>
           </Link>
@@ -227,8 +230,8 @@ export function ProjectHub() {
               My Projects
             </span>
             <Badge
-              variant="outline"
-              className="border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px] font-mono"
+              variant="pill"
+              className="text-[11px] font-mono px-2.5 py-0.5"
             >
               {projects.length} Total
             </Badge>
@@ -239,7 +242,7 @@ export function ProjectHub() {
           <Button
             size="sm"
             onClick={() => setIsNewModalOpen(true)}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 h-8 gap-1.5 shadow-sm shadow-indigo-600/30 cursor-pointer"
+            className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-4 h-9 rounded-full gap-1.5 shadow-md transition cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             <span>New Project</span>
@@ -254,11 +257,12 @@ export function ProjectHub() {
       </header>
 
       {/* ========================================================================= */}
+      {/* ========================================================================= */}
       {/* BODY WORKSPACE: LEFT SIDEBAR + MAIN CONTENT GRID */}
       {/* ========================================================================= */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative z-10">
         {/* LEFT SIDEBAR */}
-        <aside className="w-64 shrink-0 bg-[#060a12]/70 backdrop-blur-xl border-r border-white/10 flex flex-col p-4 hidden md:flex h-full overflow-hidden select-none">
+        <aside className="w-64 shrink-0 bg-black/40 backdrop-blur-xl border-r border-white/10 flex flex-col p-4 hidden md:flex h-full overflow-hidden select-none">
           <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
             {/* Search Input in Sidebar */}
             <div className="relative">
@@ -268,13 +272,13 @@ export function ProjectHub() {
                 placeholder="Search projects…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 bg-black/40 border-white/10 pl-8 text-xs text-white placeholder:text-slate-500 focus-visible:ring-indigo-500 rounded-lg"
+                className="h-9 bg-white/[0.05] border-white/12 pl-8.5 text-xs text-white placeholder:text-slate-500 focus-visible:ring-1 focus-visible:ring-white/20 rounded-full"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-2.5 text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                  className="absolute right-3 top-2.5 text-[10px] text-slate-400 hover:text-white cursor-pointer"
                 >
                   ✕
                 </button>
@@ -282,25 +286,27 @@ export function ProjectHub() {
             </div>
 
             {/* Navigation Section */}
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 px-3 pb-1">
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 px-3 pb-0.5">
                 Navigation
               </p>
               <button
                 type="button"
                 onClick={() => setActiveTab('all')}
-                className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${activeTab === 'all'
-                  ? 'bg-indigo-600/20 border border-indigo-500/30 text-white font-semibold'
+                className={`flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium transition cursor-pointer ${activeTab === 'all'
+                  ? 'bg-white text-black font-semibold shadow-md'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                   }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <FolderTree className={`h-4 w-4 ${activeTab === 'all' ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <FolderTree className={`h-4 w-4 ${activeTab === 'all' ? 'text-black' : 'text-slate-500'}`} />
                   <span>All Projects</span>
                 </div>
                 <Badge
                   variant="secondary"
-                  className="h-4 px-1.5 text-[10px] bg-white/10 text-slate-300"
+                  className={`h-4 px-2 text-[10px] rounded-full ${
+                    activeTab === 'all' ? 'bg-black/10 text-black' : 'bg-white/10 text-slate-300'
+                  }`}
                 >
                   {projects.length}
                 </Badge>
@@ -309,13 +315,13 @@ export function ProjectHub() {
               <button
                 type="button"
                 onClick={() => setActiveTab('recent')}
-                className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${activeTab === 'recent'
-                  ? 'bg-indigo-600/20 border border-indigo-500/30 text-white font-semibold'
+                className={`flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium transition cursor-pointer ${activeTab === 'recent'
+                  ? 'bg-white text-black font-semibold shadow-md'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                   }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Clock className={`h-4 w-4 ${activeTab === 'recent' ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <Clock className={`h-4 w-4 ${activeTab === 'recent' ? 'text-black' : 'text-slate-500'}`} />
                   <span>Recent Projects</span>
                 </div>
               </button>
@@ -323,26 +329,26 @@ export function ProjectHub() {
               <button
                 type="button"
                 onClick={() => setActiveTab('nextjs')}
-                className={`flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${activeTab === 'nextjs'
-                  ? 'bg-indigo-600/20 border border-indigo-500/30 text-white font-semibold'
+                className={`flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium transition cursor-pointer ${activeTab === 'nextjs'
+                  ? 'bg-white text-black font-semibold shadow-md'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                   }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Layers className={`h-4 w-4 ${activeTab === 'nextjs' ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <Layers className={`h-4 w-4 ${activeTab === 'nextjs' ? 'text-black' : 'text-slate-500'}`} />
                   <span>Next.js Projects</span>
                 </div>
               </button>
             </div>
 
             {/* Workspace Switcher Navigation */}
-            <div className="space-y-1 pt-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 px-3 pb-1">
+            <div className="space-y-1.5 pt-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 px-3 pb-0.5">
                 Workspaces
               </p>
               <Link
                 href="/editor?view=developer"
-                className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition"
+                className="flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition"
               >
                 <div className="flex items-center gap-2.5">
                   <Code2 className="h-4 w-4 text-indigo-400" />
@@ -352,7 +358,7 @@ export function ProjectHub() {
               </Link>
               <Link
                 href="/editor?view=product"
-                className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition"
+                className="flex items-center justify-between w-full px-3.5 py-2 rounded-full text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition"
               >
                 <div className="flex items-center gap-2.5">
                   <Compass className="h-4 w-4 text-purple-400" />
@@ -365,9 +371,9 @@ export function ProjectHub() {
         </aside>
 
         {/* MAIN CONTENT AREA */}
-        <main className="flex-1 flex flex-col min-w-0 bg-[#070814] overflow-y-auto">
+        <main className="flex-1 flex flex-col min-w-0 bg-transparent overflow-y-auto">
           {/* Main Content Header Filter Row */}
-          <div className="p-6 pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5">
+          <div className="p-6 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5">
             <div>
               <h1 className="text-xl font-bold text-white tracking-tight">
                 {activeTab === 'all' && 'All Projects'}
@@ -382,23 +388,23 @@ export function ProjectHub() {
             {/* Controls: Search (Mobile), Sort Dropdown */}
             <div className="flex items-center gap-3">
               <div className="sm:hidden flex-1 relative">
-                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
+                <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-500" />
                 <Input
                   type="text"
                   placeholder="Search…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-8 bg-black/40 border-white/10 pl-8 text-xs text-white"
+                  className="h-8 bg-white/[0.05] border-white/12 pl-8.5 text-xs text-white rounded-full"
                 />
               </div>
 
               <div className="flex items-center gap-2">
                 <ArrowUpDown className="h-3.5 w-3.5 text-slate-500" />
                 <Select value={sortBy} onValueChange={(val) => setSortBy(val as SortOption)}>
-                  <SelectTrigger className="h-8 w-36 bg-black/40 border-white/10 text-xs text-slate-300">
+                  <SelectTrigger className="h-9 w-36 bg-white/[0.05] border-white/12 text-xs text-slate-200 rounded-full px-3.5">
                     <SelectValue placeholder="Sort By" />
                   </SelectTrigger>
-                  <SelectContent className="bg-[#0e1022] border-white/10 text-xs text-slate-200">
+                  <SelectContent className="bg-[#18181a]/95 border-white/15 backdrop-blur-xl text-xs text-slate-200 rounded-2xl shadow-2xl">
                     <SelectItem value="updated_desc">Last Edited</SelectItem>
                     <SelectItem value="updated_asc">Oldest Edited</SelectItem>
                     <SelectItem value="name_asc">Name (A-Z)</SelectItem>
@@ -413,7 +419,7 @@ export function ProjectHub() {
           <div className="flex-1 p-6">
             {isLoading ? (
               <div className="flex flex-col items-center justify-center h-64 space-y-3">
-                <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+                <Loader2 className="h-6 w-6 animate-spin text-white" />
                 <p className="text-xs text-slate-400">Loading your persistent projects…</p>
               </div>
             ) : filteredProjects.length > 0 ? (
@@ -430,8 +436,8 @@ export function ProjectHub() {
               </div>
             ) : (
               /* Empty State */
-              <div className="flex flex-col items-center justify-center h-80 rounded-2xl border border-dashed border-white/10 bg-white/[0.01] p-8 text-center space-y-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+              <div className="flex flex-col items-center justify-center h-80 rounded-[28px] border border-dashed border-white/15 bg-black/40 backdrop-blur-xl p-8 text-center space-y-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.06] text-white border border-white/15">
                   <Code2 className="h-6 w-6" />
                 </div>
                 <div className="space-y-1">
@@ -447,7 +453,7 @@ export function ProjectHub() {
                 {!searchQuery && (
                   <Button
                     onClick={() => setIsNewModalOpen(true)}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-5 shadow-lg shadow-indigo-600/30 gap-2 cursor-pointer"
+                    className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md gap-2 cursor-pointer transition"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Create Your First Project</span>
@@ -486,7 +492,7 @@ export function ProjectHub() {
         open={Boolean(projectToDelete)}
         onOpenChange={(open) => !open && !isDeleting && setProjectToDelete(null)}
       >
-        <AlertDialogContent className="bg-[#0e1022] border-white/10 text-white shadow-2xl">
+        <AlertDialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-white shadow-2xl p-6">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-base font-bold text-white flex items-center gap-2">
               <Trash2 className="h-4 w-4 text-rose-400" />
@@ -498,10 +504,10 @@ export function ProjectHub() {
               permanently deletes all project source files, product plans, and generation history from Supabase.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="gap-2 sm:gap-0">
+          <AlertDialogFooter className="gap-2 sm:gap-0 pt-2">
             <AlertDialogCancel
               disabled={isDeleting}
-              className="text-xs text-slate-300 hover:text-white bg-white/5 border-white/10"
+              className="text-xs text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border-white/15 rounded-full px-4 h-9"
             >
               Cancel
             </AlertDialogCancel>
@@ -511,7 +517,7 @@ export function ProjectHub() {
                 void handleConfirmDelete();
               }}
               disabled={isDeleting}
-              className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 gap-1.5 cursor-pointer"
+              className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-5 h-9 rounded-full gap-1.5 cursor-pointer shadow-md"
             >
               {isDeleting ? (
                 <>

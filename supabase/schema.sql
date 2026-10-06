@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     email TEXT UNIQUE NOT NULL,
     full_name TEXT,
     avatar_url TEXT,
-    credit_limit INTEGER NOT NULL DEFAULT 4,
+    credit_limit INTEGER NOT NULL DEFAULT 100,
     credits_used INTEGER NOT NULL DEFAULT 0,
     credits_reserved INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -467,7 +467,8 @@ CREATE POLICY "Users can insert own token usage"
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.reserve_user_credit(
     p_user_id UUID,
-    p_limit INTEGER DEFAULT 4
+    p_amount INTEGER DEFAULT 10,
+    p_limit INTEGER DEFAULT 100
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -478,29 +479,38 @@ DECLARE
     v_used INTEGER;
     v_reserved INTEGER;
     v_limit INTEGER;
+    v_role TEXT;
+    v_req_amount INTEGER;
 BEGIN
-    SELECT credits_used, credits_reserved, credit_limit
-    INTO v_used, v_reserved, v_limit
+    v_req_amount := GREATEST(1, COALESCE(p_amount, 10));
+
+    SELECT credits_used, credits_reserved, credit_limit, role
+    INTO v_used, v_reserved, v_limit, v_role
     FROM public.profiles
     WHERE id = p_user_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
         INSERT INTO public.profiles (id, email, credit_limit, credits_used, credits_reserved)
-        SELECT p_user_id, email, COALESCE(p_limit, 4), 0, 1
+        SELECT p_user_id, email, COALESCE(p_limit, 100), 0, v_req_amount
         FROM auth.users
         WHERE id = p_user_id;
         RETURN TRUE;
     END IF;
 
-    v_limit := COALESCE(v_limit, p_limit, 4);
+    -- Canonical server-side admin check: Administrators bypass Codatron credit limits
+    IF v_role = 'admin' THEN
+        RETURN TRUE;
+    END IF;
 
-    IF (COALESCE(v_used, 0) + COALESCE(v_reserved, 0)) >= v_limit THEN
+    v_limit := COALESCE(v_limit, p_limit, 100);
+
+    IF (COALESCE(v_used, 0) + COALESCE(v_reserved, 0) + v_req_amount) > v_limit THEN
         RETURN FALSE;
     END IF;
 
     UPDATE public.profiles
-    SET credits_reserved = COALESCE(credits_reserved, 0) + 1,
+    SET credits_reserved = COALESCE(credits_reserved, 0) + v_req_amount,
         updated_at = NOW()
     WHERE id = p_user_id;
 
@@ -510,18 +520,23 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.finalize_user_credit(
     p_user_id UUID,
-    p_success BOOLEAN
+    p_success BOOLEAN,
+    p_amount INTEGER DEFAULT 10
 )
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+    v_req_amount INTEGER;
 BEGIN
+    v_req_amount := GREATEST(1, COALESCE(p_amount, 10));
+
     UPDATE public.profiles
-    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - 1),
+    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - v_req_amount),
         credits_used = CASE 
-            WHEN p_success THEN COALESCE(credits_used, 0) + 1 
+            WHEN p_success THEN COALESCE(credits_used, 0) + v_req_amount 
             ELSE COALESCE(credits_used, 0) 
         END,
         updated_at = NOW()
@@ -530,16 +545,21 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.release_user_credit(
-    p_user_id UUID
+    p_user_id UUID,
+    p_amount INTEGER DEFAULT 10
 )
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+    v_req_amount INTEGER;
 BEGIN
+    v_req_amount := GREATEST(1, COALESCE(p_amount, 10));
+
     UPDATE public.profiles
-    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - 1),
+    SET credits_reserved = GREATEST(0, COALESCE(credits_reserved, 0) - v_req_amount),
         updated_at = NOW()
     WHERE id = p_user_id;
 END;

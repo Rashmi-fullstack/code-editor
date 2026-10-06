@@ -370,5 +370,3 @@ test('selectProjectContext forwards conversationHistory and system prompt includ
   assert.match(systemPrompt, /Build a Netflix clone/);
   assert.match(systemPrompt, /CRITICAL FOR ITERATIVE PROMPTS/);
 });
-
-

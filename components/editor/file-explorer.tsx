@@ -472,15 +472,15 @@ export function FileExplorer({
       {/* Filter / Search input */}
       <div className="p-2 border-b border-white/5">
         <div
-          className={`relative flex items-center rounded-lg border transition-all duration-200 ${
+          className={`relative flex items-center rounded-full border transition-all duration-200 ${
             searchFocused
-              ? 'border-indigo-500/50 bg-white/[0.04] shadow-[0_0_0_1px_rgba(99,102,241,0.2)]'
-              : 'border-white/10 bg-white/[0.02]'
+              ? 'border-white/30 bg-white/[0.08] shadow-sm'
+              : 'border-white/12 bg-white/[0.04]'
           }`}
         >
           <Search
-            className={`absolute left-2.5 h-3 w-3 pointer-events-none transition-colors ${
-              searchFocused ? 'text-indigo-400' : 'text-slate-500'
+            className={`absolute left-3 h-3 w-3 pointer-events-none transition-colors ${
+              searchFocused ? 'text-white' : 'text-slate-500'
             }`}
           />
           <input
@@ -490,13 +490,13 @@ export function FileExplorer({
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="Search files…"
-            className="w-full bg-transparent py-1.5 pl-7 pr-7 text-xs text-slate-200 placeholder:text-slate-500 outline-none"
+            className="w-full bg-transparent py-1.5 pl-8 pr-7 text-xs text-slate-200 placeholder:text-slate-500 outline-none rounded-full"
           />
           {filterQuery && (
             <button
               type="button"
               onClick={() => setFilterQuery('')}
-              className="absolute right-2 text-slate-500 hover:text-slate-200"
+              className="absolute right-2.5 text-slate-500 hover:text-slate-200 cursor-pointer"
             >
               <X className="h-3 w-3" />
             </button>
@@ -516,9 +516,9 @@ export function FileExplorer({
               variant="outline"
               size="sm"
               onClick={() => handleOpenCreateFile()}
-              className="h-7 text-[11px] border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 gap-1.5 mt-1"
+              className="h-8 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white rounded-full px-3.5 gap-1.5 mt-1"
             >
-              <FilePlus className="h-3 w-3 text-indigo-400" />
+              <FilePlus className="h-3 w-3 text-white" />
               <span>New File</span>
             </Button>
           </div>
@@ -531,10 +531,11 @@ export function FileExplorer({
 
       {/* Create File Dialog */}
       <Dialog open={isNewFileDialogOpen} onOpenChange={setIsNewFileDialogOpen}>
-        <DialogContent className="bg-[#121324] border-white/10 text-slate-200 sm:max-w-md">
+        <DialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-200 sm:max-w-md p-6 overflow-hidden shadow-2xl">
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold flex items-center gap-2">
-              <FilePlus className="h-4 w-4 text-indigo-400" />
+            <DialogTitle className="text-sm font-semibold text-white flex items-center gap-2">
+              <FilePlus className="h-4 w-4 text-white" />
               <span>Create New File</span>
             </DialogTitle>
           </DialogHeader>
@@ -543,26 +544,26 @@ export function FileExplorer({
               value={dialogInput}
               onChange={(e) => setDialogInput(e.target.value)}
               placeholder="e.g. components/Pricing.tsx"
-              className="bg-black/30 border-white/10 text-xs font-mono"
+              className="bg-white/[0.05] border-white/15 text-xs font-mono rounded-xl h-10 text-white"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void confirmCreateFile();
               }}
             />
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsNewFileDialogOpen(false)}
-              className="text-xs"
+              className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
             >
               Cancel
             </Button>
             <Button
               size="sm"
               onClick={() => void confirmCreateFile()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs"
+              className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md transition cursor-pointer"
             >
               Create File
             </Button>
@@ -572,10 +573,11 @@ export function FileExplorer({
 
       {/* Create Folder Dialog */}
       <Dialog open={isNewFolderDialogOpen} onOpenChange={setIsNewFolderDialogOpen}>
-        <DialogContent className="bg-[#121324] border-white/10 text-slate-200 sm:max-w-md">
+        <DialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-200 sm:max-w-md p-6 overflow-hidden shadow-2xl">
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold flex items-center gap-2">
-              <FolderPlus className="h-4 w-4 text-indigo-400" />
+            <DialogTitle className="text-sm font-semibold text-white flex items-center gap-2">
+              <FolderPlus className="h-4 w-4 text-white" />
               <span>Create New Folder</span>
             </DialogTitle>
           </DialogHeader>
@@ -584,26 +586,26 @@ export function FileExplorer({
               value={dialogInput}
               onChange={(e) => setDialogInput(e.target.value)}
               placeholder="e.g. components/pricing"
-              className="bg-black/30 border-white/10 text-xs font-mono"
+              className="bg-white/[0.05] border-white/15 text-xs font-mono rounded-xl h-10 text-white"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void confirmCreateFolder();
               }}
             />
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsNewFolderDialogOpen(false)}
-              className="text-xs"
+              className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
             >
               Cancel
             </Button>
             <Button
               size="sm"
               onClick={() => void confirmCreateFolder()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs"
+              className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md transition cursor-pointer"
             >
               Create Folder
             </Button>
@@ -613,10 +615,11 @@ export function FileExplorer({
 
       {/* Rename Dialog */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
-        <DialogContent className="bg-[#121324] border-white/10 text-slate-200 sm:max-w-md">
+        <DialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-200 sm:max-w-md p-6 overflow-hidden shadow-2xl">
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
           <DialogHeader>
-            <DialogTitle className="text-sm font-semibold flex items-center gap-2">
-              <Edit2 className="h-4 w-4 text-indigo-400" />
+            <DialogTitle className="text-sm font-semibold text-white flex items-center gap-2">
+              <Edit2 className="h-4 w-4 text-white" />
               <span>Rename {targetItem?.is_folder ? 'Folder' : 'File'}</span>
             </DialogTitle>
           </DialogHeader>
@@ -624,26 +627,26 @@ export function FileExplorer({
             <Input
               value={dialogInput}
               onChange={(e) => setDialogInput(e.target.value)}
-              className="bg-black/30 border-white/10 text-xs font-mono"
+              className="bg-white/[0.05] border-white/15 text-xs font-mono rounded-xl h-10 text-white"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void confirmRename();
               }}
             />
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setIsRenameDialogOpen(false)}
-              className="text-xs"
+              className="text-xs text-slate-400 hover:text-white hover:bg-white/5 rounded-full px-4 h-9"
             >
               Cancel
             </Button>
             <Button
               size="sm"
               onClick={() => void confirmRename()}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs"
+              className="bg-white hover:bg-slate-200 text-black text-xs font-semibold px-5 h-9 rounded-full shadow-md transition cursor-pointer"
             >
               Rename
             </Button>
@@ -653,7 +656,7 @@ export function FileExplorer({
 
       {/* Delete Confirmation Alert Dialog */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <AlertDialogContent className="bg-[#121324] border-white/10 text-slate-200">
+        <AlertDialogContent className="rounded-3xl border border-white/15 bg-[#18181a]/95 backdrop-blur-2xl text-slate-200 p-6 shadow-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-sm font-semibold text-red-400">
               Delete {targetItem?.is_folder ? 'Folder' : 'File'}?
@@ -663,13 +666,13 @@ export function FileExplorer({
               {targetItem?.is_folder && ' All nested files will also be permanently removed.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="bg-transparent border-white/10 text-xs text-slate-300 hover:bg-white/5">
+          <AlertDialogFooter className="pt-2 gap-2 sm:gap-0">
+            <AlertDialogCancel className="bg-white/5 border-white/10 text-xs text-slate-300 hover:bg-white/10 hover:text-white rounded-full px-4 h-9">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => void confirmDelete()}
-              className="bg-red-600 hover:bg-red-500 text-white text-xs"
+              className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-full px-5 h-9"
             >
               Delete
             </AlertDialogAction>

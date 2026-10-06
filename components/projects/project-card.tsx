@@ -13,6 +13,7 @@ import {
   Calendar,
   Layers,
   Sparkles,
+  ArrowRight,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -53,7 +54,6 @@ function formatRelativeTime(dateString?: string | null): string {
   }
 }
 
-// Generate an algorithmic visual palette and mockup preview from project title
 function getThumbnailStyle(name: string) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
@@ -93,16 +93,22 @@ export function ProjectCard({
   const relativeTime = formatRelativeTime(project.updated_at || project.created_at);
 
   return (
-    <div className="group relative flex flex-col rounded-2xl border border-white/10 bg-[#0d0f22]/90 hover:border-indigo-500/50 hover:shadow-xl hover:shadow-indigo-500/10 transition-all duration-300 overflow-hidden">
+    <div className="group relative flex flex-col rounded-[28px] border border-white/12 bg-black/40 backdrop-blur-xl hover:border-white/30 hover:bg-black/55 shadow-[0_16px_40px_rgba(0,0,0,0.35)] transition-all duration-300 overflow-hidden">
+      {/* Top Specular Line */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent"
+      />
+
       {/* Visual Preview Thumbnail Window */}
       <Link
-        href={`/editor?project=${project.id}`}
+        href={`/editor?project=${project.id}&view=developer`}
         className="relative block h-40 w-full overflow-hidden bg-gradient-to-br border-b border-white/10 cursor-pointer select-none"
       >
         <div className={`absolute inset-0 bg-gradient-to-br ${thumb.gradient}`} />
 
         {/* Micro Browser Shell */}
-        <div className="absolute inset-x-3 top-3 bottom-0 rounded-t-xl border border-white/10 bg-[#080914]/90 p-2.5 shadow-2xl flex flex-col space-y-2 group-hover:translate-y-[-2px] transition duration-300">
+        <div className="absolute inset-x-4 top-4 bottom-0 rounded-t-2xl border border-white/10 bg-[#080914]/90 p-3 shadow-2xl flex flex-col space-y-2 group-hover:translate-y-[-2px] transition duration-300">
           {/* Window dots + titlebar */}
           <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
             <div className="flex items-center gap-1.5">
@@ -117,10 +123,10 @@ export function ProjectCard({
           {/* Micro Wireframe UI Preview */}
           <div className="space-y-2 pt-1">
             <div className="flex items-center justify-between">
-              <div className="h-2 w-16 rounded bg-white/20" />
+              <div className="h-2 w-16 rounded-full bg-white/20" />
               <div className="flex gap-1">
-                <div className="h-2 w-6 rounded bg-white/10" />
-                <div className="h-2 w-6 rounded bg-white/10" />
+                <div className="h-2 w-6 rounded-full bg-white/10" />
+                <div className="h-2 w-6 rounded-full bg-white/10" />
               </div>
             </div>
 
@@ -129,45 +135,30 @@ export function ProjectCard({
                 <div className="h-1.5 w-20 rounded bg-indigo-400/50" />
                 <div className="h-1 w-28 rounded bg-white/15" />
               </div>
-              <div className="h-3.5 w-8 rounded bg-indigo-600/40" />
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-              <div className="h-9 rounded-md border border-white/5 bg-white/[0.02] p-1 space-y-1">
-                <div className="h-1 w-6 rounded bg-white/30" />
-                <div className="h-1 w-10 rounded bg-white/10" />
-              </div>
-              <div className="h-9 rounded-md border border-white/5 bg-white/[0.02] p-1 space-y-1">
-                <div className="h-1 w-6 rounded bg-white/30" />
-                <div className="h-1 w-10 rounded bg-white/10" />
-              </div>
-              <div className="h-9 rounded-md border border-white/5 bg-white/[0.02] p-1 space-y-1">
-                <div className="h-1 w-6 rounded bg-white/30" />
-                <div className="h-1 w-10 rounded bg-white/10" />
-              </div>
+              <div className="h-3.5 w-8 rounded-full bg-white/30" />
             </div>
           </div>
         </div>
 
         {/* Hover overlay hint */}
-        <div className="absolute inset-0 bg-indigo-950/40 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 border border-white/20 px-3 py-1 text-xs font-semibold text-white shadow-lg backdrop-blur">
-            <ExternalLink className="h-3 w-3" />
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-1.5 text-xs font-semibold text-black shadow-lg hover:scale-105 transition-transform">
+            <ExternalLink className="h-3.5 w-3.5" />
             Open Project
           </span>
         </div>
       </Link>
 
       {/* Card Body */}
-      <div className="flex flex-1 flex-col p-4 justify-between">
+      <div className="flex flex-1 flex-col p-5 justify-between">
         <div>
           {/* Header Row: Title & Dropdown */}
           <div className="flex items-start justify-between gap-2">
             <Link
-              href={`/editor?project=${project.id}`}
+              href={`/editor?project=${project.id}&view=developer`}
               className="group/title block flex-1 min-w-0"
             >
-              <h3 className="truncate text-sm font-bold text-white group-hover/title:text-indigo-300 transition">
+              <h3 className="truncate text-base font-bold text-white group-hover/title:text-slate-200 transition">
                 {project.name}
               </h3>
             </Link>
@@ -176,7 +167,7 @@ export function ProjectCard({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  className="rounded-lg p-1 text-slate-400 hover:text-white hover:bg-white/10 transition"
+                  className="rounded-full p-1.5 text-slate-400 hover:text-white hover:bg-white/10 transition"
                   title="More actions"
                 >
                   <MoreVertical className="h-4 w-4" />
@@ -184,12 +175,12 @@ export function ProjectCard({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="w-48 bg-[#0e1022] border-white/10 text-slate-200 text-xs shadow-2xl"
+                className="w-52 rounded-2xl border-white/15 bg-[#18181a]/95 text-slate-200 text-xs shadow-2xl backdrop-blur-2xl p-1.5"
               >
                 <DropdownMenuItem asChild>
                   <Link
                     href={`/editor?project=${project.id}&view=developer`}
-                    className="flex items-center gap-2 cursor-pointer"
+                    className="flex items-center gap-2 rounded-xl py-2 cursor-pointer hover:bg-white/10"
                   >
                     <Code2 className="h-3.5 w-3.5 text-indigo-400" />
                     <span>Open in Developer IDE</span>
@@ -199,18 +190,18 @@ export function ProjectCard({
                 <DropdownMenuItem asChild>
                   <Link
                     href={`/editor?project=${project.id}&view=product`}
-                    className="flex items-center gap-2 cursor-pointer"
+                    className="flex items-center gap-2 rounded-xl py-2 cursor-pointer hover:bg-white/10"
                   >
                     <Compass className="h-3.5 w-3.5 text-purple-400" />
                     <span>Open in Product Manager</span>
                   </Link>
                 </DropdownMenuItem>
 
-                <DropdownMenuSeparator className="bg-white/10" />
+                <DropdownMenuSeparator className="bg-white/10 my-1" />
 
                 <DropdownMenuItem
                   onClick={() => onRename(project)}
-                  className="flex items-center gap-2 cursor-pointer"
+                  className="flex items-center gap-2 rounded-xl py-2 cursor-pointer hover:bg-white/10"
                 >
                   <Edit2 className="h-3.5 w-3.5 text-slate-400" />
                   <span>Rename / Edit Info</span>
@@ -218,17 +209,17 @@ export function ProjectCard({
 
                 <DropdownMenuItem
                   onClick={() => onDuplicate(project)}
-                  className="flex items-center gap-2 cursor-pointer"
+                  className="flex items-center gap-2 rounded-xl py-2 cursor-pointer hover:bg-white/10"
                 >
                   <Copy className="h-3.5 w-3.5 text-slate-400" />
                   <span>Duplicate Project</span>
                 </DropdownMenuItem>
 
-                <DropdownMenuSeparator className="bg-white/10" />
+                <DropdownMenuSeparator className="bg-white/10 my-1" />
 
                 <DropdownMenuItem
                   onClick={() => onDelete(project)}
-                  className="flex items-center gap-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer"
+                  className="flex items-center gap-2 rounded-xl py-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/15 cursor-pointer"
                 >
                   <Trash2 className="h-3.5 w-3.5 text-rose-400" />
                   <span>Delete Project</span>
@@ -238,34 +229,34 @@ export function ProjectCard({
           </div>
 
           {/* Description */}
-          <p className="mt-1 line-clamp-2 text-xs text-slate-400 leading-relaxed min-h-[32px]">
+          <p className="mt-1.5 line-clamp-2 text-xs text-slate-300 leading-relaxed min-h-[32px]">
             {project.description || 'AI Studio workspace with full code editing and product management.'}
           </p>
         </div>
 
         {/* Footer Meta & Actions */}
-        <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+        <div className="mt-5 pt-3.5 border-t border-white/10 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
             <Calendar className="h-3 w-3 text-slate-500" />
             <span>{relativeTime}</span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Badge
-              variant="outline"
-              className="border-white/10 bg-white/[0.03] text-[10px] text-slate-300 font-normal px-2 py-0.5"
+              variant="pill"
+              className="text-[10px] px-2.5 py-0.5"
             >
               <Layers className="h-2.5 w-2.5 mr-1 text-indigo-400" />
               {project.framework || 'Next.js'}
             </Badge>
 
-            <Link href={`/editor?project=${project.id}`}>
+            <Link href={`/editor?project=${project.id}&view=developer`}>
               <Button
-                variant="ghost"
                 size="sm"
-                className="h-7 px-2.5 text-xs text-indigo-300 hover:text-white hover:bg-indigo-600/30 gap-1 font-medium"
+                className="h-7 px-3 text-xs bg-white text-black font-semibold hover:bg-slate-200 gap-1 rounded-full shadow-sm"
               >
                 <span>Open</span>
+                <ArrowRight className="h-3 w-3" />
               </Button>
             </Link>
           </div>

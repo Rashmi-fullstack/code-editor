@@ -208,13 +208,13 @@ export function EditorTabBar({
         <div className="flex items-center gap-2 shrink-0">
           {/* Viewport controls when in preview or split mode */}
           {viewMode !== 'code' && (
-            <div className="hidden sm:flex items-center rounded-lg border border-white/10 bg-white/[0.02] p-0.5 gap-0.5 mr-1">
+            <div className="hidden sm:flex items-center rounded-full border border-white/12 bg-[#28282a] p-1 gap-0.5 mr-1">
               <button
                 type="button"
                 onClick={() => setViewport('desktop')}
-                className={`p-1 rounded transition ${
+                className={`p-1 rounded-full transition cursor-pointer ${
                   viewport === 'desktop'
-                    ? 'bg-indigo-500/20 text-indigo-400'
+                    ? 'bg-white/20 text-white'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
                 title="Desktop viewport"
@@ -224,9 +224,9 @@ export function EditorTabBar({
               <button
                 type="button"
                 onClick={() => setViewport('tablet')}
-                className={`p-1 rounded transition ${
+                className={`p-1 rounded-full transition cursor-pointer ${
                   viewport === 'tablet'
-                    ? 'bg-indigo-500/20 text-indigo-400'
+                    ? 'bg-white/20 text-white'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
                 title="Tablet viewport (768px)"
@@ -236,9 +236,9 @@ export function EditorTabBar({
               <button
                 type="button"
                 onClick={() => setViewport('mobile')}
-                className={`p-1 rounded transition ${
+                className={`p-1 rounded-full transition cursor-pointer ${
                   viewport === 'mobile'
-                    ? 'bg-indigo-500/20 text-indigo-400'
+                    ? 'bg-white/20 text-white'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
                 title="Mobile viewport (390px)"
@@ -249,27 +249,27 @@ export function EditorTabBar({
           )}
 
           {/* Mode pills */}
-          <div className="flex items-center rounded-lg border border-white/10 bg-[#0e101f] p-0.5 gap-0.5">
+          <div className="flex items-center rounded-full border border-white/12 bg-[#28282a] p-1 gap-1">
             <button
               type="button"
               onClick={() => setViewMode('preview')}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer ${
                 viewMode === 'preview'
-                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-white text-black font-semibold shadow-sm'
+                  : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Play className="h-3 w-3 text-emerald-400 fill-emerald-400/20" />
+              <Play className={`h-3 w-3 ${viewMode === 'preview' ? 'text-black fill-black/20' : 'text-emerald-400 fill-emerald-400/20'}`} />
               <span className="hidden md:inline">Preview</span>
             </button>
 
             <button
               type="button"
               onClick={() => setViewMode('code')}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer ${
                 viewMode === 'code'
-                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-white text-black font-semibold shadow-sm'
+                  : 'text-slate-400 hover:text-white'
               }`}
             >
               <Code2 className="h-3 w-3" />
@@ -279,13 +279,13 @@ export function EditorTabBar({
             <button
               type="button"
               onClick={() => setViewMode('split')}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer ${
                 viewMode === 'split'
-                  ? 'bg-indigo-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-white text-black font-semibold shadow-sm'
+                  : 'text-slate-400 hover:text-white'
               }`}
             >
-              <Columns2 className="h-3 w-3 text-cyan-400" />
+              <Columns2 className={`h-3 w-3 ${viewMode === 'split' ? 'text-black' : 'text-cyan-400'}`} />
               <span className="hidden md:inline">Split</span>
             </button>
 
@@ -300,7 +300,7 @@ export function EditorTabBar({
                   setViewMode('terminal');
                 }
               }}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition text-slate-400 hover:text-white hover:bg-white/5"
+              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition text-slate-400 hover:text-white cursor-pointer"
               title="Open Diagnostics & Runtime Logs"
             >
               <TerminalIcon className="h-3 w-3 text-slate-400" />
@@ -312,7 +312,7 @@ export function EditorTabBar({
 
       {/* Lower Row: Breadcrumbs (only when viewing code) */}
       {breadcrumbs.length > 0 && (viewMode === 'code' || viewMode === 'split') && (
-        <div className="flex h-6 items-center gap-1.5 border-t border-white/5 px-3 text-[11px] text-slate-500 bg-[#090b14]">
+        <div className="flex h-6 items-center gap-1.5 border-t border-white/5 px-3 text-[11px] text-slate-500 bg-black/30">
           {breadcrumbs.map((segment, idx) => {
             const isLast = idx === breadcrumbs.length - 1;
             return (

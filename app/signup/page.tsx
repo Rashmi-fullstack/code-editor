@@ -93,7 +93,7 @@ export default function SignupPage() {
         )}
         <button
           disabled={pending || googlePending}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-3 font-medium shadow-lg shadow-blue-500/20 transition hover:to-purple-700 disabled:opacity-60 cursor-pointer"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-white hover:bg-slate-200 text-black font-semibold h-11 px-5 py-2.5 shadow-[0_0_24px_rgba(255,255,255,0.25)] transition-all duration-200 hover:scale-[1.01] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
         >
           {pending ? (
             "Creating account..."

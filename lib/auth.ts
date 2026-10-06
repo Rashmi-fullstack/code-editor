@@ -24,8 +24,17 @@ export async function verifyPassword(password: string, stored: string) {
 
 function sign(payload: string) { return createHmac("sha256", secret).update(payload).digest("base64url"); }
 
+function ensureUuid(id: string, fallbackSeed: string): string {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    return id;
+  }
+  const hash = createHmac("md5", "codatron-uuid").update(id || fallbackSeed).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 export function createSession(user: SessionUser) {
-  const payload = Buffer.from(JSON.stringify({ ...user, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString("base64url");
+  const safeUser = { ...user, id: ensureUuid(user.id, user.email) };
+  const payload = Buffer.from(JSON.stringify({ ...safeUser, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 
@@ -35,7 +44,12 @@ export function readSession(token?: string): SessionUser | null {
   if (!payload || !signature || sign(payload) !== signature) return null;
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString());
-    return session.exp > Date.now() ? { id: session.id, name: session.name, email: session.email } : null;
+    if (session.exp <= Date.now()) return null;
+    return {
+      id: ensureUuid(session.id, session.email),
+      name: session.name,
+      email: session.email,
+    };
   } catch { return null; }
 }
 

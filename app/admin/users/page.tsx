@@ -44,6 +44,7 @@ interface UserRecord {
   avatarUrl: string | null;
   role: 'user' | 'admin';
   status: 'active' | 'suspended';
+  plan?: string;
   creditLimit: number;
   creditsUsed: number;
   creditsRemaining: number;
@@ -281,17 +282,27 @@ export default function AdminUsersPage() {
                         </div>
                       </td>
 
-                      {/* Role */}
+                      {/* Role & Plan */}
                       <td className="py-3.5 px-3">
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-mono capitalize ${isAdmin
-                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                            : 'border-zinc-700 bg-zinc-800/50 text-zinc-300'
-                            }`}
-                        >
-                          {user.role}
-                        </Badge>
+                        <div className="flex flex-col gap-1 items-start">
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-mono capitalize ${isAdmin
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                              : 'border-zinc-700 bg-zinc-800/50 text-zinc-300'
+                              }`}
+                          >
+                            {user.role}
+                          </Badge>
+                          {user.plan && user.plan !== 'free' && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] font-mono capitalize border-indigo-500/30 bg-indigo-500/10 text-indigo-300"
+                            >
+                              {user.plan}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
 
                       {/* Status */}

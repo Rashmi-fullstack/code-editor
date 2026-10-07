@@ -16,6 +16,7 @@ import {
   Loader2,
   Save,
   Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +39,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import type { DbCoupon } from '@/lib/types/database';
+import { formatCouponExpirationDate, isCouponExpired } from '@/lib/billing/coupons';
 
 export default function AdminCouponsPage() {
   const [coupons, setCoupons] = useState<DbCoupon[]>([]);
@@ -47,6 +49,7 @@ export default function AdminCouponsPage() {
 
   // Form state
   const [editingCouponId, setEditingCouponId] = useState<string | null>(null);
+  const [originalCode, setOriginalCode] = useState('');
   const [formCode, setFormCode] = useState('');
   const [formDiscountType, setFormDiscountType] = useState<'percent' | 'fixed'>('percent');
   const [formDiscountValue, setFormDiscountValue] = useState('20');
@@ -55,6 +58,7 @@ export default function AdminCouponsPage() {
   const [formMinPlanAmount, setFormMinPlanAmount] = useState('0');
   const [formExpiresAt, setFormExpiresAt] = useState('2026-12-31');
   const [formIsActive, setFormIsActive] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchCoupons = async () => {
     try {
@@ -79,6 +83,7 @@ export default function AdminCouponsPage() {
 
   const openCreateDialog = () => {
     setEditingCouponId(null);
+    setOriginalCode('');
     setFormCode('');
     setFormDiscountType('percent');
     setFormDiscountValue('20');
@@ -92,6 +97,7 @@ export default function AdminCouponsPage() {
 
   const openEditDialog = (coupon: DbCoupon) => {
     setEditingCouponId(coupon.id);
+    setOriginalCode(coupon.code);
     setFormCode(coupon.code);
     setFormDiscountType(coupon.discount_type);
     setFormDiscountValue(String(coupon.discount_value));
@@ -104,7 +110,8 @@ export default function AdminCouponsPage() {
   };
 
   const handleSaveCoupon = async () => {
-    if (!formCode.trim()) {
+    const cleanCode = formCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    if (!cleanCode) {
       toast.error('Coupon code is required');
       return;
     }
@@ -112,6 +119,10 @@ export default function AdminCouponsPage() {
     const discountVal = Number(formDiscountValue);
     if (isNaN(discountVal) || discountVal <= 0) {
       toast.error('Please enter a valid discount value');
+      return;
+    }
+    if (formDiscountType === 'percent' && discountVal > 100) {
+      toast.error('Percentage discount cannot exceed 100%');
       return;
     }
 
@@ -122,7 +133,7 @@ export default function AdminCouponsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingCouponId || undefined,
-          code: formCode.trim().toUpperCase(),
+          code: cleanCode,
           discount_type: formDiscountType,
           discount_value: discountVal,
           max_redemptions: formMaxRedemptions.trim() ? Number(formMaxRedemptions) : null,
@@ -133,12 +144,12 @@ export default function AdminCouponsPage() {
         }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Failed to save coupon');
+        throw new Error(data.message || 'Failed to save coupon');
       }
 
-      toast.success(editingCouponId ? 'Coupon updated' : 'Coupon created');
+      toast.success(editingCouponId ? `Coupon "${cleanCode}" updated` : `Coupon "${cleanCode}" created`);
       setIsDialogOpen(false);
       await fetchCoupons();
     } catch (err: unknown) {
@@ -148,21 +159,26 @@ export default function AdminCouponsPage() {
     }
   };
 
-  const handleDeleteCoupon = async (id: string, code: string) => {
-    if (!confirm(`Are you sure you want to delete coupon "${code}"?`)) return;
+  const handleDeleteCoupon = async (coupon: DbCoupon) => {
+    if (deletingId) return;
+    setDeletingId(coupon.id);
+    const toastId = `delete-coupon-${coupon.id}`;
+    toast.loading(`Deleting coupon...`, { id: toastId });
 
     try {
-      const res = await fetch(`/api/admin/coupons?id=${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/admin/coupons?id=${encodeURIComponent(coupon.id)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
-        toast.success(`Coupon "${code}" deleted`);
+        toast.success(`Coupon "${coupon.code}" deleted successfully.`, { id: toastId });
         await fetchCoupons();
       } else {
-        toast.error('Failed to delete coupon');
+        toast.error(`Failed to delete coupon "${coupon.code}".`, { id: toastId });
       }
     } catch {
-      toast.error('Error deleting coupon');
+      toast.error(`Failed to delete coupon "${coupon.code}".`, { id: toastId });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -215,12 +231,12 @@ export default function AdminCouponsPage() {
         </div>
       ) : coupons.length === 0 ? (
         <Card className="rounded-2xl border-white/10 bg-[#141417] p-12 text-center text-zinc-400">
-          No coupons configured. Click "Create Coupon" to issue your first promo code.
+          No coupons configured. Click &quot;Create Coupon&quot; to issue your first promo code.
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {coupons.map((coupon) => {
-            const isExpired = coupon.expires_at ? new Date(coupon.expires_at).getTime() < Date.now() : false;
+            const expired = isCouponExpired(coupon.expires_at);
             return (
               <Card
                 key={coupon.id}
@@ -233,11 +249,11 @@ export default function AdminCouponsPage() {
                         <span className="font-mono font-bold text-lg text-amber-300 tracking-wider">
                           {coupon.code}
                         </span>
-                        {coupon.is_active && !isExpired ? (
+                        {coupon.is_active && !expired ? (
                           <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-[10px]">
                             Active
                           </Badge>
-                        ) : isExpired ? (
+                        ) : expired ? (
                           <Badge variant="outline" className="border-red-500/30 bg-red-500/10 text-red-400 text-[10px]">
                             Expired
                           </Badge>
@@ -259,7 +275,7 @@ export default function AdminCouponsPage() {
                   <div className="grid grid-cols-2 gap-2 text-xs text-zinc-400 bg-white/[0.03] border border-white/5 rounded-xl p-3">
                     <div>
                       <span className="text-[10px] text-zinc-500 block">Redemptions</span>
-                      <span className="text-zinc-200 font-medium">
+                      <span className="text-zinc-200 font-medium font-mono">
                         {coupon.redemptions_count} / {coupon.max_redemptions !== null ? coupon.max_redemptions : '∞'}
                       </span>
                     </div>
@@ -271,14 +287,14 @@ export default function AdminCouponsPage() {
 
                     <div>
                       <span className="text-[10px] text-zinc-500 block">Expires</span>
-                      <span className="text-zinc-200 font-medium">
-                        {coupon.expires_at ? new Date(coupon.expires_at).toLocaleDateString() : 'Never'}
+                      <span className="text-zinc-200 font-medium font-mono">
+                        {formatCouponExpirationDate(coupon.expires_at)}
                       </span>
                     </div>
 
                     <div>
                       <span className="text-[10px] text-zinc-500 block">Min. Plan</span>
-                      <span className="text-zinc-200 font-medium">
+                      <span className="text-zinc-200 font-medium font-mono">
                         {coupon.min_plan_amount > 0 ? `₹${coupon.min_plan_amount}` : 'None'}
                       </span>
                     </div>
@@ -298,10 +314,16 @@ export default function AdminCouponsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleDeleteCoupon(coupon.id, coupon.code)}
+                    disabled={deletingId === coupon.id}
+                    onClick={() => void handleDeleteCoupon(coupon)}
                     className="h-8 px-2.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 text-xs"
+                    title={`Delete coupon "${coupon.code}"`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    {deletingId === coupon.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
                   </Button>
                 </div>
               </Card>
@@ -312,11 +334,11 @@ export default function AdminCouponsPage() {
 
       {/* Create / Edit Coupon Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md bg-[#141417] border-white/10 text-white rounded-2xl">
+        <DialogContent className="max-w-md bg-[#141417] border-white/10 text-white rounded-2xl shadow-2xl">
           <DialogHeader>
             <DialogTitle className="text-lg font-bold text-white flex items-center gap-2">
               <Tag className="h-5 w-5 text-amber-400" />
-              <span>{editingCouponId ? `Edit Coupon: ${formCode}` : 'Create New Coupon'}</span>
+              <span>{editingCouponId ? `Edit Coupon: ${originalCode || formCode}` : 'Create New Coupon'}</span>
             </DialogTitle>
             <DialogDescription className="text-xs text-zinc-400">
               Configure discount type, max redemptions, and validation parameters.
@@ -329,7 +351,9 @@ export default function AdminCouponsPage() {
               <Input
                 value={formCode}
                 onChange={(e) => setFormCode(e.target.value.toUpperCase())}
-                placeholder="e.g. WELCOME20, HACKATHON50"
+                placeholder="e.g. WELCOME25, HACKATHON50"
+                autoComplete="off"
+                spellCheck={false}
                 className="bg-black/50 border-white/10 text-amber-300 font-mono font-bold h-9 rounded-xl text-xs uppercase"
               />
             </div>
@@ -427,6 +451,7 @@ export default function AdminCouponsPage() {
             <Button
               variant="outline"
               size="sm"
+              disabled={saving}
               onClick={() => setIsDialogOpen(false)}
               className="rounded-xl border-white/10 bg-transparent hover:bg-white/10 text-zinc-300 text-xs"
             >
@@ -436,10 +461,10 @@ export default function AdminCouponsPage() {
               size="sm"
               onClick={handleSaveCoupon}
               disabled={saving}
-              className="rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold gap-1.5 text-xs"
+              className="rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold gap-1.5 text-xs shadow-lg shadow-amber-500/20"
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              <span>Save Coupon</span>
+              <span>{saving ? 'Saving...' : 'Save Coupon'}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

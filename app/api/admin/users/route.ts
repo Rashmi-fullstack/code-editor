@@ -32,7 +32,7 @@ export async function GET(request: Request) {
 
     let baseQuery = privileged
       .from('profiles')
-      .select('id, email, full_name, avatar_url, role, status, credit_limit, credits_used, credits_reserved, created_at, updated_at', {
+      .select('id, email, full_name, avatar_url, role, status, plan, credit_limit, credits_used, credits_reserved, created_at, updated_at', {
         count: 'exact',
       });
 
@@ -68,6 +68,7 @@ export async function GET(request: Request) {
                   avatar_url: au.user_metadata?.avatar_url || au.user_metadata?.picture || null,
                   role: isAdmin ? 'admin' : 'user',
                   status: 'active',
+                  plan: isAdmin ? 'admin' : 'free',
                   credit_limit: isAdmin ? 999999 : 100,
                   updated_at: new Date().toISOString(),
                 },
@@ -106,6 +107,7 @@ export async function GET(request: Request) {
         const isAdmin = adminEmails.includes(user.email?.toLowerCase());
         const userRole = user.role || (isAdmin ? 'admin' : 'user');
         const userStatus = user.status || 'active';
+        const userPlan = user.plan || (userRole === 'admin' ? 'admin' : 'free');
 
         return {
           id: user.id,
@@ -114,6 +116,7 @@ export async function GET(request: Request) {
           avatarUrl: user.avatar_url,
           role: userRole,
           status: userStatus,
+          plan: userPlan,
           creditLimit: user.credit_limit || 20,
           creditsUsed: user.credits_used || 0,
           creditsRemaining: userRole === 'admin' ? 999999 : remainingCredits,

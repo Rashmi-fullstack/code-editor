@@ -34,6 +34,7 @@ export async function GET() {
       createdAt: balance.createdAt,
       isAdmin: Boolean(balance.isAdmin),
       isUnlimited: Boolean(balance.isAdmin),
+      plan: balance.plan || 'free',
     });
   } catch (err) {
     console.error('[Credits API] Error:', err);

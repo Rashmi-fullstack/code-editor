@@ -58,6 +58,7 @@ export default function AdminPlansPage() {
   const [formFeaturesText, setFormFeaturesText] = useState('');
   const [formIsActive, setFormIsActive] = useState(true);
   const [formIsPublished, setFormIsPublished] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchPlans = async () => {
     try {
@@ -159,21 +160,27 @@ export default function AdminPlansPage() {
     }
   };
 
-  const handleDeletePlan = async (id: string) => {
-    if (!confirm(`Are you sure you want to delete plan "${id}"?`)) return;
+  const handleDeletePlan = async (id: string, name?: string) => {
+    if (deletingId) return;
+    setDeletingId(id);
+    const planName = name || id;
+    const toastId = `delete-plan-${id}`;
+    toast.loading(`Deleting plan...`, { id: toastId });
 
     try {
       const res = await fetch(`/api/admin/plans?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
-        toast.success('Plan deleted');
+        toast.success(`Plan "${planName}" deleted successfully.`, { id: toastId });
         await fetchPlans();
       } else {
-        toast.error('Failed to delete plan');
+        toast.error(`Failed to delete plan "${planName}".`, { id: toastId });
       }
     } catch {
-      toast.error('Error deleting plan');
+      toast.error(`Failed to delete plan "${planName}".`, { id: toastId });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -323,10 +330,16 @@ export default function AdminPlansPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDeletePlan(plan.id)}
+                      disabled={deletingId === plan.id}
+                      onClick={() => void handleDeletePlan(plan.id, plan.name)}
                       className="h-8 px-2.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-500/10 text-xs"
+                      title={`Delete plan "${plan.name || plan.id}"`}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      {deletingId === plan.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
                     </Button>
                   </div>
                 </div>

@@ -22,6 +22,7 @@ import {
   ChevronRight,
   CreditCard,
   Tag,
+  WalletCards,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth-provider';
 import { Button } from '@/components/ui/button';
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   { href: '/admin/providers', label: 'AI Providers', icon: Cpu },
   { href: '/admin/plans', label: 'Plans & Pricing', icon: CreditCard },
   { href: '/admin/coupons', label: 'Coupons', icon: Tag },
+  { href: '/admin/payments', label: 'Payments & Subscriptions', icon: WalletCards },
   { href: '/admin/errors', label: 'Error Center', icon: AlertTriangle },
   { href: '/admin/system-health', label: 'System Health', icon: Activity },
   { href: '/admin/credits', label: 'User Credits', icon: Zap },
@@ -267,7 +269,9 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
               <>
                 <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
                 <span className="text-zinc-200 capitalize">
-                  {pathname.split('/admin/')[1]?.replace('-', ' ')}
+                  {pathname === '/admin/payments'
+                    ? 'Payments & Subscriptions'
+                    : pathname.split('/admin/')[1]?.replace('-', ' ')}
                 </span>
               </>
             )}

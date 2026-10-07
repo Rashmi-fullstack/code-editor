@@ -10,6 +10,7 @@ export interface UserCreditBalance {
   remaining: number;
   createdAt?: string | null;
   isAdmin?: boolean;
+  plan?: string;
 }
 
 /**
@@ -28,6 +29,7 @@ export async function getUserCreditBalance(
     remaining: DEFAULT_AI_CREDIT_LIMIT,
     createdAt: null,
     isAdmin: false,
+    plan: 'free',
   };
 
   try {
@@ -42,7 +44,7 @@ export async function getUserCreditBalance(
         const privileged = createPrivilegedClient();
         const { data, error } = await privileged
           .from('profiles')
-          .select('credit_limit, credits_used, credits_reserved, created_at, role, status')
+          .select('credit_limit, credits_used, credits_reserved, created_at, role, status, plan')
           .eq('id', userId)
           .maybeSingle();
         if (!error && data) {
@@ -56,7 +58,7 @@ export async function getUserCreditBalance(
         try {
           const { data } = await supabase
             .from('profiles')
-            .select('credit_limit, credits_used, credits_reserved, created_at, role, status')
+            .select('credit_limit, credits_used, credits_reserved, created_at, role, status, plan')
             .eq('id', userId)
             .maybeSingle();
           if (data) {
@@ -76,7 +78,7 @@ export async function getUserCreditBalance(
           const privileged = createPrivilegedClient();
           await privileged
             .from('profiles')
-            .update({ role: 'admin' })
+            .update({ role: 'admin', plan: 'admin' })
             .eq('id', userId);
         } catch {
           // Non-blocking sync
@@ -90,6 +92,7 @@ export async function getUserCreditBalance(
         remaining: -1,
         createdAt: profile?.created_at || null,
         isAdmin: true,
+        plan: 'admin',
       };
     }
 
@@ -101,6 +104,7 @@ export async function getUserCreditBalance(
             id: userId,
             email: userEmail || undefined,
             role: 'user',
+            plan: 'free',
             credit_limit: DEFAULT_AI_CREDIT_LIMIT,
             credits_used: 0,
             credits_reserved: 0,
@@ -141,6 +145,7 @@ export async function getUserCreditBalance(
       remaining,
       createdAt: profile.created_at || null,
       isAdmin: false,
+      plan: profile.plan || 'free',
     };
   } catch (err) {
     console.warn('[Credits] Error fetching balance:', err);

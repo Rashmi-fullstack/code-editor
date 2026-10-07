@@ -20,6 +20,7 @@ export type Database = {
           credits_reserved: number;
           role: 'user' | 'admin';
           status: 'active' | 'suspended';
+          plan: string;
           created_at: string;
           updated_at: string;
         };
@@ -33,6 +34,7 @@ export type Database = {
           credits_reserved?: number;
           role?: 'user' | 'admin';
           status?: 'active' | 'suspended';
+          plan?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -46,6 +48,7 @@ export type Database = {
           credits_reserved?: number;
           role?: 'user' | 'admin';
           status?: 'active' | 'suspended';
+          plan?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -662,6 +665,7 @@ export type Database = {
           applicable_plans: Json;
           expires_at: string | null;
           is_active: boolean;
+          deleted_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -678,6 +682,7 @@ export type Database = {
           applicable_plans?: Json;
           expires_at?: string | null;
           is_active?: boolean;
+          deleted_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -694,6 +699,7 @@ export type Database = {
           applicable_plans?: Json;
           expires_at?: string | null;
           is_active?: boolean;
+          deleted_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -732,6 +738,114 @@ export type Database = {
           discount_applied?: number;
           final_price?: number;
           redeemed_at?: string;
+        };
+        Relationships: [];
+      };
+      payments: {
+        Row: {
+          id: string;
+          user_id: string;
+          plan_id: string;
+          razorpay_order_id: string;
+          razorpay_payment_id: string | null;
+          razorpay_signature: string | null;
+          amount: number;
+          amount_paise: number;
+          currency: string;
+          original_amount: number;
+          discount_amount: number;
+          coupon_id: string | null;
+          coupon_code: string | null;
+          status: 'created' | 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded';
+          payment_method: string | null;
+          error_reason: string | null;
+          metadata: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          plan_id: string;
+          razorpay_order_id: string;
+          razorpay_payment_id?: string | null;
+          razorpay_signature?: string | null;
+          amount: number;
+          amount_paise: number;
+          currency?: string;
+          original_amount: number;
+          discount_amount?: number;
+          coupon_id?: string | null;
+          coupon_code?: string | null;
+          status?: 'created' | 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded';
+          payment_method?: string | null;
+          error_reason?: string | null;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          plan_id?: string;
+          razorpay_order_id?: string;
+          razorpay_payment_id?: string | null;
+          razorpay_signature?: string | null;
+          amount?: number;
+          amount_paise?: number;
+          currency?: string;
+          original_amount?: number;
+          discount_amount?: number;
+          coupon_id?: string | null;
+          coupon_code?: string | null;
+          status?: 'created' | 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded';
+          payment_method?: string | null;
+          error_reason?: string | null;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          plan_id: string;
+          status: 'active' | 'cancelled' | 'expired' | 'past_due';
+          current_period_start: string;
+          current_period_end: string;
+          cancel_at_period_end: boolean;
+          payment_id: string | null;
+          razorpay_payment_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          plan_id: string;
+          status?: 'active' | 'cancelled' | 'expired' | 'past_due';
+          current_period_start?: string;
+          current_period_end?: string;
+          cancel_at_period_end?: boolean;
+          payment_id?: string | null;
+          razorpay_payment_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          plan_id?: string;
+          status?: 'active' | 'cancelled' | 'expired' | 'past_due';
+          current_period_start?: string;
+          current_period_end?: string;
+          cancel_at_period_end?: boolean;
+          payment_id?: string | null;
+          razorpay_payment_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -788,3 +902,5 @@ export type AdminSettings = Database['public']['Tables']['admin_settings']['Row'
 export type SubscriptionPlan = Database['public']['Tables']['subscription_plans']['Row'];
 export type DbCoupon = Database['public']['Tables']['coupons']['Row'];
 export type DbCouponRedemption = Database['public']['Tables']['coupon_redemptions']['Row'];
+export type PaymentRecord = Database['public']['Tables']['payments']['Row'];
+export type SubscriptionRecord = Database['public']['Tables']['subscriptions']['Row'];

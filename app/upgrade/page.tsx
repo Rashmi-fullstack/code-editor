@@ -2,7 +2,7 @@
 
 import React, { Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft,
   Check,
@@ -15,11 +15,8 @@ import {
   ShieldCheck,
   HelpCircle,
   ExternalLink,
-  Tag,
-  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { useCredits } from '@/components/credit-provider';
@@ -29,14 +26,11 @@ import type { SubscriptionPlan } from '@/lib/types/database';
 import { toast } from 'sonner';
 
 function UpgradeContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = searchParams.get('projectId');
   const from = searchParams.get('from');
-  const { creditsRemaining, creditLimit, isAdmin, refreshCredits } = useCredits();
-  const [upgradingPlan, setUpgradingPlan] = React.useState<string | null>(null);
-  const [couponCode, setCouponCode] = React.useState('');
-  const [appliedCoupon, setAppliedCoupon] = React.useState<{ code: string; discountAmount: number; finalPrice: number } | null>(null);
-  const [validatingCoupon, setValidatingCoupon] = React.useState(false);
+  const { creditsRemaining, creditLimit, isAdmin, currentPlan, refreshCredits } = useCredits();
   const [plans, setPlans] = React.useState<SubscriptionPlan[]>([]);
 
   React.useEffect(() => {
@@ -88,59 +82,17 @@ function UpgradeContent() {
 
   const backLabel = projectId ? 'Back to IDE' : from === 'editor' ? 'Back to IDE' : 'Back to Projects';
 
-  const handleApplyCoupon = async (planPrice: number = proPlan.price_inr || 499) => {
-    if (!couponCode.trim()) {
-      toast.error('Please enter a coupon code.');
-      return;
-    }
-    setValidatingCoupon(true);
-    try {
-      const res = await fetch('/api/billing/coupon/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: couponCode.trim(),
-          planId: 'pro',
-          planPriceInr: planPrice,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.valid) {
-        toast.error(data.error || 'Invalid or expired coupon code.');
-        setAppliedCoupon(null);
-      } else {
-        setAppliedCoupon({
-          code: data.code,
-          discountAmount: data.discountAmount,
-          finalPrice: data.finalPrice,
-        });
-        toast.success(`Coupon ${data.code} applied! Discount: ₹${data.discountAmount}`);
-      }
-    } catch {
-      toast.error('Failed to validate coupon');
-    } finally {
-      setValidatingCoupon(false);
-    }
-  };
-
-  const handleSelectPlan = async (planId: string) => {
+  const handleSelectPlan = (planId: string) => {
     if (planId === 'free') {
       toast.info('You are already on the Starter Free Plan.');
       return;
     }
-    setUpgradingPlan(planId);
-    try {
-      // Simulate/trigger plan upgrade flow
-      await new Promise((r) => setTimeout(r, 600));
-      toast.success(
-        `Selected ${CODATRON_PLANS[planId]?.name || planId}. Subscription management will open in your billing portal.`
-      );
-      await refreshCredits();
-    } catch {
-      toast.error('Failed to initiate upgrade.');
-    } finally {
-      setUpgradingPlan(null);
+    const query = new URLSearchParams();
+    query.set('plan', planId);
+    if (projectId) {
+      query.set('projectId', projectId);
     }
+    router.push(`/checkout?${query.toString()}`);
   };
 
   return (
@@ -255,37 +207,6 @@ function UpgradeContent() {
           </div>
         )}
 
-        {/* Promotional Coupon Input (for normal users) */}
-        {!isAdmin && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 flex flex-col sm:flex-row items-center justify-between gap-3 max-w-xl mx-auto w-full">
-            <div className="flex items-center gap-2 text-xs text-zinc-300 w-full sm:w-auto">
-              <Tag className="h-4 w-4 text-amber-400 shrink-0" />
-              <span>Have a promo coupon?</span>
-              {appliedCoupon && (
-                <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px]">
-                  {appliedCoupon.code} (₹{appliedCoupon.discountAmount} off)
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <Input
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                placeholder="e.g. WELCOME20"
-                className="bg-black/50 border-white/10 text-amber-300 font-mono text-xs h-9 uppercase w-36 rounded-xl"
-              />
-              <Button
-                size="sm"
-                onClick={() => handleApplyCoupon(499)}
-                disabled={validatingCoupon}
-                className="h-9 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs px-3"
-              >
-                {validatingCoupon ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply'}
-              </Button>
-            </div>
-          </div>
-        )}
-
         {/* Pricing Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Plan 1: Starter / Free */}
@@ -293,7 +214,7 @@ function UpgradeContent() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">{freePlan.name}</span>
-                {!isAdmin && (
+                {!isAdmin && (!currentPlan || currentPlan === 'free') && (
                   <Badge variant="outline" className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono px-2.5 py-0.5">
                     Current Plan
                   </Badge>
@@ -350,9 +271,16 @@ function UpgradeContent() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-indigo-300 uppercase tracking-wider">{proPlan.name}</span>
-                <Badge className="rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-0 text-[10px] font-medium px-2.5 py-0.5 shadow-sm">
-                  {proPlan.badge || 'Most Popular'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {!isAdmin && currentPlan === 'pro' && (
+                    <Badge variant="outline" className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono px-2.5 py-0.5">
+                      Current Plan
+                    </Badge>
+                  )}
+                  <Badge className="rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-0 text-[10px] font-medium px-2.5 py-0.5 shadow-sm">
+                    {proPlan.badge || 'Most Popular'}
+                  </Badge>
+                </div>
               </div>
 
               <div>
@@ -386,13 +314,20 @@ function UpgradeContent() {
                   Manage in Admin Portal →
                 </Button>
               </Link>
+            ) : currentPlan === 'pro' ? (
+              <Button
+                disabled
+                variant="outline"
+                className="w-full rounded-full border-white/10 bg-white/5 text-slate-400 text-xs font-semibold h-10 cursor-not-allowed"
+              >
+                Current Active Plan
+              </Button>
             ) : (
               <Button
                 onClick={() => handleSelectPlan('pro')}
-                disabled={Boolean(upgradingPlan)}
                 className="w-full rounded-full bg-white hover:bg-slate-200 text-black text-xs font-bold h-10 shadow-lg transition active:scale-95"
               >
-                {upgradingPlan === 'pro' ? 'Setting up…' : appliedCoupon ? `Upgrade with Coupon (₹${appliedCoupon.finalPrice})` : 'Upgrade to Pro'}
+                Upgrade to Pro
               </Button>
             )}
           </Card>
@@ -402,9 +337,16 @@ function UpgradeContent() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">{teamPlan.name}</span>
-                <Badge variant="outline" className="rounded-full border-purple-500/30 bg-purple-500/10 text-purple-300 text-[10px] font-mono px-2.5 py-0.5">
-                  {teamPlan.badge || 'Best Value'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {!isAdmin && (currentPlan === 'premium' || currentPlan === 'business') && (
+                    <Badge variant="outline" className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono px-2.5 py-0.5">
+                      Current Plan
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className="rounded-full border-purple-500/30 bg-purple-500/10 text-purple-300 text-[10px] font-mono px-2.5 py-0.5">
+                    {teamPlan.badge || 'Best Value'}
+                  </Badge>
+                </div>
               </div>
 
               <div>
@@ -438,14 +380,21 @@ function UpgradeContent() {
                   Manage in Admin Portal →
                 </Button>
               </Link>
+            ) : (currentPlan === 'premium' || currentPlan === 'business') ? (
+              <Button
+                disabled
+                variant="outline"
+                className="w-full rounded-full border-white/10 bg-white/5 text-slate-400 text-xs font-semibold h-10 cursor-not-allowed"
+              >
+                Current Active Plan
+              </Button>
             ) : (
               <Button
-                onClick={() => handleSelectPlan('business')}
-                disabled={Boolean(upgradingPlan)}
+                onClick={() => handleSelectPlan('premium')}
                 variant="outline"
                 className="w-full rounded-full border-white/20 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold h-10 transition active:scale-95"
               >
-                {upgradingPlan === 'business' ? 'Setting up…' : 'Upgrade to Team'}
+                Upgrade to Team
               </Button>
             )}
           </Card>

@@ -70,6 +70,7 @@ export default function AdminUsersPage() {
   });
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Suspension Modal State
   const [suspendModalUser, setSuspendModalUser] = useState<UserRecord | null>(null);
@@ -86,6 +87,7 @@ export default function AdminUsersPage() {
     async (pageToLoad = 1, searchQuery = search) => {
       try {
         setLoading(true);
+        setError(null);
         const params = new URLSearchParams({
           page: String(pageToLoad),
           limit: '20',
@@ -95,12 +97,17 @@ export default function AdminUsersPage() {
         }
 
         const res = await fetch(`/api/admin/users?${params.toString()}`);
-        if (!res.ok) throw new Error('Failed to fetch users');
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.message || `Failed to fetch users (${res.status})`);
+        }
         const data = await res.json();
         setUsers(data.users || []);
-        setPagination(data.pagination);
+        if (data.pagination) setPagination(data.pagination);
       } catch (err: unknown) {
-        toast.error(err instanceof Error ? err.message : 'Error loading users');
+        const msg = err instanceof Error ? err.message : 'Error loading users';
+        setError(msg);
+        toast.error(msg);
       } finally {
         setLoading(false);
       }
@@ -217,13 +224,34 @@ export default function AdminUsersPage() {
               {loading && users.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-zinc-500">
-                    Loading users...
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500/20 border-t-emerald-500" />
+                      <span>Loading registered users...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : error && users.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center gap-2 max-w-sm mx-auto">
+                      <AlertTriangle className="h-7 w-7 text-amber-400" />
+                      <p className="text-sm font-semibold text-white">Unable to load users</p>
+                      <p className="text-xs text-zinc-400 font-mono">{error}</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void fetchUsers(pagination.page, search)}
+                        className="mt-2 text-xs border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl"
+                      >
+                        Retry
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-zinc-500">
-                    No users matching your query.
+                    {search ? `No users matching "${search}".` : 'No registered users found.'}
                   </td>
                 </tr>
               ) : (
@@ -257,11 +285,10 @@ export default function AdminUsersPage() {
                       <td className="py-3.5 px-3">
                         <Badge
                           variant="outline"
-                          className={`text-[10px] font-mono capitalize ${
-                            isAdmin
-                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                              : 'border-zinc-700 bg-zinc-800/50 text-zinc-300'
-                          }`}
+                          className={`text-[10px] font-mono capitalize ${isAdmin
+                            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                            : 'border-zinc-700 bg-zinc-800/50 text-zinc-300'
+                            }`}
                         >
                           {user.role}
                         </Badge>
@@ -271,11 +298,10 @@ export default function AdminUsersPage() {
                       <td className="py-3.5 px-3">
                         <Badge
                           variant="outline"
-                          className={`text-[10px] font-mono capitalize ${
-                            isSuspended
-                              ? 'border-red-500/30 bg-red-500/10 text-red-400'
-                              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                          }`}
+                          className={`text-[10px] font-mono capitalize ${isSuspended
+                            ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                            }`}
                         >
                           {user.status}
                         </Badge>
@@ -338,11 +364,10 @@ export default function AdminUsersPage() {
                             <DropdownMenuSeparator className="bg-white/10" />
                             <DropdownMenuItem
                               onClick={() => setSuspendModalUser(user)}
-                              className={`gap-2 cursor-pointer focus:bg-white/5 ${
-                                isSuspended
-                                  ? 'text-emerald-400 hover:text-emerald-300'
-                                  : 'text-red-400 hover:text-red-300'
-                              }`}
+                              className={`gap-2 cursor-pointer focus:bg-white/5 ${isSuspended
+                                ? 'text-emerald-400 hover:text-emerald-300'
+                                : 'text-red-400 hover:text-red-300'
+                                }`}
                             >
                               {isSuspended ? (
                                 <>
@@ -484,11 +509,10 @@ export default function AdminUsersPage() {
                     key={type}
                     type="button"
                     onClick={() => setCreditAction(type)}
-                    className={`py-1.5 px-3 rounded-xl border text-xs font-semibold uppercase tracking-wider transition ${
-                      creditAction === type
-                        ? 'border-amber-500/50 bg-amber-500/20 text-amber-300'
-                        : 'border-white/10 bg-white/5 text-zinc-400 hover:text-white'
-                    }`}
+                    className={`py-1.5 px-3 rounded-xl border text-xs font-semibold uppercase tracking-wider transition ${creditAction === type
+                      ? 'border-amber-500/50 bg-amber-500/20 text-amber-300'
+                      : 'border-white/10 bg-white/5 text-zinc-400 hover:text-white'
+                      }`}
                   >
                     {type}
                   </button>

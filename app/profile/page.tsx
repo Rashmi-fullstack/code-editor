@@ -87,7 +87,7 @@ export default function ProfilePage() {
 
   // Authoritative server-verified admin state
   const [serverIsAdmin, setServerIsAdmin] = useState<boolean | null>(null);
-  const effectiveIsAdmin = serverIsAdmin !== null ? serverIsAdmin : contextIsAdmin;
+  const effectiveIsAdmin = serverIsAdmin === true;
 
   // Profile data states
   const [aiConfig, setAiConfig] = useState<AiConfigState | null>(null);
@@ -156,8 +156,8 @@ export default function ProfilePage() {
         if (creditsRes.ok) {
           const creditsJson = await creditsRes.json();
           if (!ignore) {
-            if (serverIsAdmin === null) {
-              setServerIsAdmin(Boolean(creditsJson.isAdmin || creditsJson.isUnlimited));
+            if (serverIsAdmin === null && typeof creditsJson.isAdmin === 'boolean') {
+              setServerIsAdmin(creditsJson.isAdmin);
             }
             setAccountData({
               createdAt: creditsJson.createdAt || null,
@@ -935,53 +935,53 @@ export default function ProfilePage() {
 
             {/* Operations Breakdown */}
             <div className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-4 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Layers className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Usage by Operation</span>
-              </h3>
-              <span className="text-[11px] text-slate-500 font-mono">
-                {usage?.totalRequests ? `${usage.totalRequests} operations recorded` : 'No operations'}
-              </span>
-            </div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Layers className="h-3.5 w-3.5 text-indigo-400" />
+                  <span>Usage by Operation</span>
+                </h3>
+                <span className="text-[11px] text-slate-500 font-mono">
+                  {usage?.totalRequests ? `${usage.totalRequests} operations recorded` : 'No operations'}
+                </span>
+              </div>
 
-            {!usage || usage.totalRequests === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
-                <Zap className="h-6 w-6 text-slate-500" />
-                <p className="font-medium text-slate-300">No AI operations executed yet.</p>
-                <p className="text-[11px] text-slate-500 max-w-sm">
-                  Run builds, product plans, or code modifications in the IDE to track real token metrics and credit consumption.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
-                {['PLAN', 'GENERATE', 'DEBUG', 'FIX', 'REFACTOR', 'ANALYZE'].map((op) => {
-                  const data = usage.byOperation[op as keyof typeof usage.byOperation] || { count: 0, tokens: 0 };
-                  return (
-                    <div
-                      key={op}
-                      className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-1 hover:border-white/20 transition"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-semibold text-slate-400 font-mono">
-                          {op}
-                        </span>
-                        <span className="text-[10px] text-slate-500">
-                          {data.count} reqs
-                        </span>
+              {!usage || usage.totalRequests === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+                  <Zap className="h-6 w-6 text-slate-500" />
+                  <p className="font-medium text-slate-300">No AI operations executed yet.</p>
+                  <p className="text-[11px] text-slate-500 max-w-sm">
+                    Run builds, product plans, or code modifications in the IDE to track real token metrics and credit consumption.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
+                  {['PLAN', 'GENERATE', 'DEBUG', 'FIX', 'REFACTOR', 'ANALYZE'].map((op) => {
+                    const data = usage.byOperation[op as keyof typeof usage.byOperation] || { count: 0, tokens: 0 };
+                    return (
+                      <div
+                        key={op}
+                        className="rounded-xl border border-white/10 bg-white/[0.04] p-3 space-y-1 hover:border-white/20 transition"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-slate-400 font-mono">
+                            {op}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {data.count} reqs
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold text-white">
+                          {formatNumber(data.tokens)}{' '}
+                          <span className="text-[10px] font-normal text-slate-500">tokens</span>
+                        </div>
                       </div>
-                      <div className="text-sm font-bold text-white">
-                        {formatNumber(data.tokens)}{' '}
-                        <span className="text-[10px] font-normal text-slate-500">tokens</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* ======================================================================= */}
         {/* SECTION 3: AI PROVIDER & BYOK */}

@@ -66,8 +66,32 @@ export async function resolveAIConfig(
     }
   }
 
-  // Developer IDE: Exclusively uses Hugging Face Inference Providers (Qwen3-Coder)
+  // Developer IDE: Resolves primary provider based on Admin Settings configuration
   if (preferredScope === 'developer') {
+    let primaryProvider = 'huggingface';
+    try {
+      const { getAdminSettings } = await import('@/lib/admin/settings');
+      const settings = await getAdminSettings();
+      if (settings.primary_provider) {
+        primaryProvider = settings.primary_provider;
+      }
+    } catch {
+      // Fallback to default
+    }
+
+    if (primaryProvider === 'google-gemini') {
+      const platformGeminiKey = process.env.GEMINI_API_KEY?.trim();
+      if (platformGeminiKey) {
+        return {
+          provider: geminiProvider,
+          providerId: 'google-gemini',
+          model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+          apiKey: platformGeminiKey,
+          keySource: 'platform',
+        };
+      }
+    }
+
     const hfToken = process.env.HF_TOKEN?.trim();
     if (hfToken) {
       return {
@@ -78,6 +102,18 @@ export async function resolveAIConfig(
         keySource: 'platform',
       };
     }
+
+    const platformGeminiKey = process.env.GEMINI_API_KEY?.trim();
+    if (platformGeminiKey) {
+      return {
+        provider: geminiProvider,
+        providerId: 'google-gemini',
+        model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+        apiKey: platformGeminiKey,
+        keySource: 'platform',
+      };
+    }
+
     throw new Error(
       'Hugging Face API token is not configured. Please configure your Hugging Face API Token in Profile or set HF_TOKEN in the server environment.'
     );

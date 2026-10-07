@@ -90,6 +90,23 @@ export async function POST(
     // Canonical server-side admin detection: Only the database profile role is authoritative
     const isAdmin = userProfile?.role === 'admin';
 
+    // Global Platform Maintenance Mode Check
+    try {
+      const { getAdminSettings } = await import('@/lib/admin/settings');
+      const settings = await getAdminSettings();
+      if (settings.maintenance_mode && !isAdmin) {
+        return NextResponse.json(
+          {
+            message: settings.system_announcement || 'Codatron is currently undergoing scheduled platform maintenance. Please check back shortly.',
+            error: 'MAINTENANCE_MODE',
+          },
+          { status: 503 }
+        );
+      }
+    } catch {
+      // Non-blocking in dev
+    }
+
     // 2. Strict Project Ownership Verification
     let project: { id: string; name: string; user_id: string } | null = null;
     const { data: dbProject } = await privileged

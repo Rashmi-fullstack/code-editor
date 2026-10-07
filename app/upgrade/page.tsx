@@ -25,6 +25,7 @@ import { Card } from '@/components/ui/card';
 import { useCredits } from '@/components/credit-provider';
 import { GlobalUserMenu } from '@/components/layout/global-user-menu';
 import { CODATRON_PLANS, CREDIT_COSTS } from '@/lib/credits/config';
+import type { SubscriptionPlan } from '@/lib/types/database';
 import { toast } from 'sonner';
 
 function UpgradeContent() {
@@ -36,16 +37,58 @@ function UpgradeContent() {
   const [couponCode, setCouponCode] = React.useState('');
   const [appliedCoupon, setAppliedCoupon] = React.useState<{ code: string; discountAmount: number; finalPrice: number } | null>(null);
   const [validatingCoupon, setValidatingCoupon] = React.useState(false);
+  const [plans, setPlans] = React.useState<SubscriptionPlan[]>([]);
+
+  React.useEffect(() => {
+    fetch('/api/billing/plans')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.plans && Array.isArray(d.plans) && d.plans.length > 0) {
+          setPlans(d.plans);
+        }
+      })
+      .catch((err) => console.warn('Failed to fetch dynamic billing plans:', err));
+  }, []);
+
+  const freePlan = plans.find((p) => p.id === 'free') || {
+    id: 'free',
+    name: 'Starter',
+    price_inr: 0,
+    credits: 100,
+    badge: 'Starter' as string | null,
+    features: CODATRON_PLANS.free.features,
+    description: '100 Codatron AI credits initial allowance. Great for prototyping and initial builds.',
+  };
+
+  const proPlan = plans.find((p) => p.id === 'pro') || {
+    id: 'pro',
+    name: 'Developer Pro',
+    price_inr: 499,
+    credits: 500,
+    badge: 'Most Popular' as string | null,
+    features: CODATRON_PLANS.pro.features,
+    description: '500 Codatron AI credits / month. Built for power creators shipping web applications.',
+  };
+
+  const teamPlan = plans.find((p) => p.id === 'premium' || p.id === 'business') || {
+    id: 'premium',
+    name: 'Team Premium',
+    price_inr: 999,
+    credits: 1200,
+    badge: 'Best Value' as string | null,
+    features: CODATRON_PLANS.business.features,
+    description: '1,200 Codatron AI credits / month. High throughput for engineering teams and digital studios.',
+  };
 
   const backUrl = projectId
     ? `/editor?projectId=${projectId}`
     : from === 'editor'
-    ? '/editor'
-    : '/projects';
+      ? '/editor'
+      : '/projects';
 
   const backLabel = projectId ? 'Back to IDE' : from === 'editor' ? 'Back to IDE' : 'Back to Projects';
 
-  const handleApplyCoupon = async (planPrice: number = 499) => {
+  const handleApplyCoupon = async (planPrice: number = proPlan.price_inr || 499) => {
     if (!couponCode.trim()) {
       toast.error('Please enter a coupon code.');
       return;
@@ -249,7 +292,7 @@ function UpgradeContent() {
           <Card className="rounded-[28px] border border-white/12 bg-black/40 backdrop-blur-xl p-7 shadow-xl flex flex-col justify-between relative overflow-hidden space-y-6">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Starter</span>
+                <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">{freePlan.name}</span>
                 {!isAdmin && (
                   <Badge variant="outline" className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-mono px-2.5 py-0.5">
                     Current Plan
@@ -259,18 +302,18 @@ function UpgradeContent() {
 
               <div>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold text-white tracking-tight">$0</span>
+                  <span className="text-4xl font-extrabold text-white tracking-tight">₹{freePlan.price_inr}</span>
                   <span className="text-xs text-slate-400 font-medium">/ forever</span>
                 </div>
                 <p className="text-xs text-slate-400 mt-2">
-                  100 Codatron AI credits initial allowance. Great for prototyping and initial builds.
+                  {freePlan.description || `${freePlan.credits} Codatron AI credits initial allowance. Great for prototyping and initial builds.`}
                 </p>
               </div>
 
               <div className="h-px bg-white/10" />
 
               <ul className="space-y-3 text-xs text-slate-300">
-                {CODATRON_PLANS.free.features.map((feat, idx) => (
+                {(Array.isArray(freePlan.features) ? (freePlan.features as string[]) : CODATRON_PLANS.free.features).map((feat, idx) => (
                   <li key={idx} className="flex items-start gap-2.5">
                     <Check className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
                     <span>{feat}</span>
@@ -306,26 +349,26 @@ function UpgradeContent() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-indigo-300 uppercase tracking-wider">Developer Pro</span>
+                <span className="text-sm font-semibold text-indigo-300 uppercase tracking-wider">{proPlan.name}</span>
                 <Badge className="rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-0 text-[10px] font-medium px-2.5 py-0.5 shadow-sm">
-                  Most Popular
+                  {proPlan.badge || 'Most Popular'}
                 </Badge>
               </div>
 
               <div>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold text-white tracking-tight">₹499</span>
+                  <span className="text-4xl font-extrabold text-white tracking-tight">₹{proPlan.price_inr}</span>
                   <span className="text-xs text-slate-400 font-medium">/ month</span>
                 </div>
                 <p className="text-xs text-indigo-200/80 mt-2">
-                  500 Codatron AI credits / month. Built for power creators shipping web applications.
+                  {proPlan.description || `${proPlan.credits} Codatron AI credits / month. Built for power creators shipping web applications.`}
                 </p>
               </div>
 
               <div className="h-px bg-white/10" />
 
               <ul className="space-y-3 text-xs text-slate-200">
-                {CODATRON_PLANS.pro.features.map((feat, idx) => (
+                {(Array.isArray(proPlan.features) ? (proPlan.features as string[]) : CODATRON_PLANS.pro.features).map((feat, idx) => (
                   <li key={idx} className="flex items-start gap-2.5">
                     <Check className="h-4 w-4 text-indigo-400 shrink-0 mt-0.5" />
                     <span>{feat}</span>
@@ -358,26 +401,26 @@ function UpgradeContent() {
           <Card className="rounded-[28px] border border-white/12 bg-black/40 backdrop-blur-xl p-7 shadow-xl flex flex-col justify-between relative overflow-hidden space-y-6">
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Team / Business</span>
+                <span className="text-sm font-semibold text-slate-400 uppercase tracking-wider">{teamPlan.name}</span>
                 <Badge variant="outline" className="rounded-full border-purple-500/30 bg-purple-500/10 text-purple-300 text-[10px] font-mono px-2.5 py-0.5">
-                  Best Value
+                  {teamPlan.badge || 'Best Value'}
                 </Badge>
               </div>
 
               <div>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-extrabold text-white tracking-tight">$80</span>
+                  <span className="text-4xl font-extrabold text-white tracking-tight">₹{teamPlan.price_inr}</span>
                   <span className="text-xs text-slate-400 font-medium">/ month</span>
                 </div>
                 <p className="text-xs text-slate-400 mt-2">
-                  5,000 Codatron AI credits / month. High throughput for engineering teams and digital studios.
+                  {teamPlan.description || `${teamPlan.credits} Codatron AI credits / month. High throughput for engineering teams and digital studios.`}
                 </p>
               </div>
 
               <div className="h-px bg-white/10" />
 
               <ul className="space-y-3 text-xs text-slate-300">
-                {CODATRON_PLANS.business.features.map((feat, idx) => (
+                {(Array.isArray(teamPlan.features) ? (teamPlan.features as string[]) : CODATRON_PLANS.business.features).map((feat, idx) => (
                   <li key={idx} className="flex items-start gap-2.5">
                     <Check className="h-4 w-4 text-purple-400 shrink-0 mt-0.5" />
                     <span>{feat}</span>

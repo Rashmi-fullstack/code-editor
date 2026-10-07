@@ -32,7 +32,7 @@ export async function GET(request: Request) {
 
     let baseQuery = privileged
       .from('profiles')
-      .select('id, email, full_name, avatar_url, credit_limit, credits_used, credits_reserved, created_at, updated_at', {
+      .select('id, email, full_name, avatar_url, role, status, credit_limit, credits_used, credits_reserved, created_at, updated_at', {
         count: 'exact',
       });
 
@@ -40,13 +40,57 @@ export async function GET(request: Request) {
       baseQuery = baseQuery.or(`email.ilike.%${query}%,full_name.ilike.%${query}%`);
     }
 
-    const { data: users, count, error } = await baseQuery
+    if (roleFilter && (roleFilter === 'admin' || roleFilter === 'user')) {
+      baseQuery = baseQuery.eq('role', roleFilter);
+    }
+
+    if (statusFilter && (statusFilter === 'active' || statusFilter === 'suspended')) {
+      baseQuery = baseQuery.eq('status', statusFilter);
+    }
+
+    let { data: users, count, error } = await baseQuery
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
+    // If profiles was empty, check if we need to sync from auth.users
+    if ((!users || users.length === 0) && !query && page === 1) {
+      try {
+        const { data: authList } = await privileged.auth.admin.listUsers();
+        if (authList?.users && authList.users.length > 0) {
+          for (const au of authList.users) {
+            if (au.id && au.email) {
+              const isAdmin = adminEmails.includes(au.email.toLowerCase());
+              await privileged.from('profiles').upsert(
+                {
+                  id: au.id,
+                  email: au.email,
+                  full_name: au.user_metadata?.full_name || au.user_metadata?.name || au.email.split('@')[0],
+                  avatar_url: au.user_metadata?.avatar_url || au.user_metadata?.picture || null,
+                  role: isAdmin ? 'admin' : 'user',
+                  status: 'active',
+                  credit_limit: isAdmin ? 999999 : 100,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'id' }
+              );
+            }
+          }
+          // Re-fetch after sync
+          const refetch = await baseQuery
+            .order('created_at', { ascending: false })
+            .range(offset, offset + limit - 1);
+          users = refetch.data;
+          count = refetch.count;
+          error = refetch.error;
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+    }
+
     if (error) {
       console.error('[Admin Users API Error]:', error);
-      return NextResponse.json({ message: 'Error fetching users list.' }, { status: 500 });
+      return NextResponse.json({ message: 'Error fetching users list: ' + error.message }, { status: 500 });
     }
 
     // Attach project counts and AI usage summary for each user in this page

@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/server";
+import { getAdminSettings } from "@/lib/admin/settings";
 
 export async function POST(request: Request) {
+  const settings = await getAdminSettings();
+  if (!settings.new_registrations_enabled) {
+    return NextResponse.json(
+      { message: "New user registrations are currently disabled by the platform administrator." },
+      { status: 403 },
+    );
+  }
+
   const { name, email, password } = await request.json();
   const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
 

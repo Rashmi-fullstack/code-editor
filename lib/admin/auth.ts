@@ -50,7 +50,7 @@ export async function verifyAdmin(): Promise<AdminAuthResult> {
         user = {
           id: sessionUser.id,
           email: sessionUser.email,
-          user_metadata: { full_name: sessionUser.name, role: 'admin' },
+          user_metadata: { full_name: sessionUser.name },
           app_metadata: {},
           aud: 'authenticated',
           created_at: new Date().toISOString(),
@@ -87,8 +87,8 @@ export async function verifyAdmin(): Promise<AdminAuthResult> {
       };
     }
 
-    // Authorize if role is admin OR email is in ADMIN_EMAILS
-    const hasAdminRole = profile?.role === 'admin' || user.user_metadata?.role === 'admin';
+    // Authorize strictly if database profile role is admin OR email is in ADMIN_EMAILS
+    const hasAdminRole = profile?.role === 'admin';
     const hasAdminEmail = isConfiguredAdminEmail(user.email);
 
     if (hasAdminRole || hasAdminEmail) {

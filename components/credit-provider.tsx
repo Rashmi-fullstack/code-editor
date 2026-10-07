@@ -33,11 +33,12 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
       isUnlimited?: boolean;
     }) => {
       // Authoritative server-side determination from /api/profile/credits
-      const isUserAdmin = Boolean(data.isAdmin || data.isUnlimited);
+      const isUserAdmin = Boolean(data.isAdmin);
+      const isUnlimited = Boolean(data.isAdmin || data.isUnlimited);
       setIsAdmin(isUserAdmin);
-      setCreditLimit(isUserAdmin ? -1 : typeof data.limit === 'number' ? data.limit : 100);
+      setCreditLimit(isUnlimited ? -1 : typeof data.limit === 'number' ? data.limit : 100);
       setCreditsUsed(typeof data.used === 'number' ? data.used : 0);
-      setCreditsRemaining(isUserAdmin ? -1 : typeof data.remaining === 'number' ? data.remaining : 100);
+      setCreditsRemaining(isUnlimited ? -1 : typeof data.remaining === 'number' ? data.remaining : 100);
     },
     []
   );
@@ -74,7 +75,7 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
             applyCreditData(data);
           }
         })
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => {
           if (!ignore) setIsLoading(false);
         });
@@ -125,9 +126,9 @@ export function useCredits() {
       creditsUsed: 0,
       isAdmin: false,
       isLoading: false,
-      refreshCredits: async () => {},
-      fetchCredits: async () => {},
-      consumeCreditOptimistic: () => {},
+      refreshCredits: async () => { },
+      fetchCredits: async () => { },
+      consumeCreditOptimistic: () => { },
     };
   }
   return ctx;

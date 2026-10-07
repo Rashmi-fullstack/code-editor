@@ -126,7 +126,21 @@ export async function POST(request: Request) {
     email: data.user.email || "",
   };
 
-  const isUserAdmin = isConfiguredAdminEmail(data.user.email);
+  let isUserAdmin = isConfiguredAdminEmail(data.user.email);
+  try {
+    const privileged = createPrivilegedClient();
+    const { data: profile } = await privileged
+      .from("profiles")
+      .select("role")
+      .eq("id", data.user.id)
+      .maybeSingle();
+    if (profile?.role === "admin") {
+      isUserAdmin = true;
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+
   const response = NextResponse.json({
     user: normalUser,
     isAdmin: isUserAdmin,

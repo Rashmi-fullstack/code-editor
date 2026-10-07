@@ -41,7 +41,6 @@ const NAV_ITEMS = [
   { href: '/admin/providers', label: 'AI Providers', icon: Cpu },
   { href: '/admin/plans', label: 'Plans & Pricing', icon: CreditCard },
   { href: '/admin/coupons', label: 'Coupons', icon: Tag },
-  { href: '/admin/razorpay', label: 'Razorpay', icon: CreditCard },
   { href: '/admin/errors', label: 'Error Center', icon: AlertTriangle },
   { href: '/admin/system-health', label: 'System Health', icon: Activity },
   { href: '/admin/credits', label: 'User Credits', icon: Zap },

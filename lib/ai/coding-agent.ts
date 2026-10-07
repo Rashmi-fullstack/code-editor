@@ -1893,6 +1893,26 @@ export async function runCodingAgent(
     const isPlatformToken = options?.aiConfig?.keySource !== 'byok';
 
     if (isPlatformToken || isUnavailable || isPlatformQuotaDepleted) {
+      let autoFallbackEnabled = true;
+      let configuredFallbackProvider: string = DEVELOPER_IDE_CONFIG.fallbackProvider;
+      try {
+        const { getAdminSettings } = await import('@/lib/admin/settings');
+        const settings = await getAdminSettings();
+        if (typeof settings.auto_fallback_enabled === 'boolean') {
+          autoFallbackEnabled = settings.auto_fallback_enabled;
+        }
+        if (settings.fallback_provider) {
+          configuredFallbackProvider = settings.fallback_provider;
+        }
+      } catch {
+        // Fallback to default
+      }
+
+      if (!autoFallbackEnabled) {
+        console.warn('[Coding Agent Fallback] Auto-fallback is disabled in Admin Settings. Aborting fallback.');
+        throw hfErr;
+      }
+
       const geminiKey = process.env.GEMINI_API_KEY?.trim();
       if (!geminiKey) {
         console.warn('[Coding Agent Fallback] Hugging Face failed but GEMINI_API_KEY is not configured in environment.');
@@ -1905,7 +1925,7 @@ export async function runCodingAgent(
         console.warn('[Coding Agent]', fallbackReason, hfErr instanceof Error ? hfErr.message : hfErr);
         const fallbackModel = DEVELOPER_IDE_CONFIG.fallbackModel;
         options?.onFallback?.({
-          providerId: DEVELOPER_IDE_CONFIG.fallbackProvider,
+          providerId: configuredFallbackProvider,
           model: fallbackModel,
         });
 

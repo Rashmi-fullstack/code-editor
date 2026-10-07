@@ -161,6 +161,15 @@ export async function reserveCredit(
   try {
     // 1. Authoritative Admin Check: Administrators have no Codatron application credit limit
     const initialBalance = await getUserCreditBalance(supabase, userId);
+    if ((initialBalance as any).status === 'suspended') {
+      return {
+        success: false,
+        remaining: 0,
+        cost: reqAmount,
+        message: 'Your account has been suspended by an administrator. Please contact support.',
+      };
+    }
+
     if (initialBalance.isAdmin) {
       return { success: true, remaining: -1, cost: 0 };
     }

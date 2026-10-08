@@ -29,8 +29,11 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
   const applyCreditData = useCallback(
     (data: {
       limit?: number;
+      creditLimit?: number;
       used?: number;
+      creditsUsed?: number;
       remaining?: number;
+      creditsRemaining?: number;
       isAdmin?: boolean;
       isUnlimited?: boolean;
       plan?: string;
@@ -38,10 +41,29 @@ export function CreditProvider({ children }: { children: React.ReactNode }) {
       // Authoritative server-side determination from /api/profile/credits
       const isUserAdmin = Boolean(data.isAdmin);
       const isUnlimited = Boolean(data.isAdmin || data.isUnlimited);
+      const effLimit =
+        typeof data.creditLimit === 'number'
+          ? data.creditLimit
+          : typeof data.limit === 'number'
+            ? data.limit
+            : 100;
+      const effUsed =
+        typeof data.creditsUsed === 'number'
+          ? data.creditsUsed
+          : typeof data.used === 'number'
+            ? data.used
+            : 0;
+      const effRemaining =
+        typeof data.creditsRemaining === 'number'
+          ? data.creditsRemaining
+          : typeof data.remaining === 'number'
+            ? data.remaining
+            : Math.max(0, effLimit - effUsed);
+
       setIsAdmin(isUserAdmin);
-      setCreditLimit(isUnlimited ? -1 : typeof data.limit === 'number' ? data.limit : 100);
-      setCreditsUsed(typeof data.used === 'number' ? data.used : 0);
-      setCreditsRemaining(isUnlimited ? -1 : typeof data.remaining === 'number' ? data.remaining : 100);
+      setCreditLimit(isUnlimited ? -1 : effLimit);
+      setCreditsUsed(effUsed);
+      setCreditsRemaining(isUnlimited ? -1 : effRemaining);
       if (data.plan) setCurrentPlan(data.plan);
     },
     []

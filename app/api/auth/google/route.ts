@@ -42,23 +42,54 @@ export async function POST(request: Request) {
   const cleanEmail = (data.user.email || "").trim().toLowerCase();
   const isUserAdmin = isConfiguredAdminEmail(cleanEmail);
 
-  // Synchronize profile row and allowance
+  // Synchronize profile row safely without overwriting paid subscription plans or allowances
   try {
     const privileged = createPrivilegedClient();
-    await privileged.from("profiles").upsert(
-      {
+    const { data: existingProfile } = await privileged
+      .from("profiles")
+      .select("id, role, plan, credit_limit")
+      .eq("id", data.user.id)
+      .maybeSingle();
+
+    const fullName =
+      data.user.user_metadata?.full_name ||
+      data.user.user_metadata?.name ||
+      cleanEmail.split("@")[0] ||
+      "User";
+    const avatarUrl =
+      data.user.user_metadata?.avatar_url ||
+      data.user.user_metadata?.picture ||
+      null;
+
+    if (!existingProfile) {
+      await privileged.from("profiles").insert({
         id: data.user.id,
         email: cleanEmail,
-        full_name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || cleanEmail.split("@")[0] || "User",
+        full_name: fullName,
+        avatar_url: avatarUrl,
         role: isUserAdmin ? "admin" : "user",
         status: "active",
+        plan: isUserAdmin ? "admin" : "free",
         credit_limit: isUserAdmin ? 999999 : DEFAULT_AI_CREDIT_LIMIT,
+        credits_used: 0,
+        credits_reserved: 0,
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
-  } catch {
-    // Non-blocking fallback
+      });
+    } else {
+      const updates: any = {
+        email: cleanEmail,
+        full_name: fullName,
+        avatar_url: avatarUrl,
+        updated_at: new Date().toISOString(),
+      };
+      if (isUserAdmin) {
+        updates.role = "admin";
+        updates.credit_limit = 999999;
+      }
+      await privileged.from("profiles").update(updates).eq("id", data.user.id);
+    }
+  } catch (syncErr) {
+    console.warn("[Google Auth] Non-blocking profile sync warning:", syncErr);
   }
 
   const user = {

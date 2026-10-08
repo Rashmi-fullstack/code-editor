@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 
     let baseQuery = privileged
       .from('profiles')
-      .select('id, email, full_name, credit_limit, credits_used, credits_reserved, updated_at', {
+      .select('id, email, full_name, credit_limit, credits_used, credits_reserved, plan, role, updated_at', {
         count: 'exact',
       });
 
@@ -49,19 +49,28 @@ export async function GET(request: Request) {
     }
 
     const rows = ((users || []) as any[]).map((u) => {
-      const limitVal = u.credit_limit || 20;
-      const usedVal = u.credits_used || 0;
-      const remaining = Math.max(0, limitVal - usedVal);
-      const isAdmin = adminEmails.includes(u.email?.toLowerCase());
+      const isAdmin = adminEmails.includes(u.email?.toLowerCase()) || u.role === 'admin';
       const role = u.role || (isAdmin ? 'admin' : 'user');
+      const planId = u.plan || (role === 'admin' ? 'admin' : 'free');
+      const planAllowance =
+        planId === 'pro'
+          ? 500
+          : planId === 'premium' || planId === 'business'
+            ? 1200
+            : 100;
+      const limitVal = role === 'admin' ? 999999 : Math.max(u.credit_limit || 0, planAllowance);
+      const usedVal = typeof u.credits_used === 'number' ? u.credits_used : 0;
+      const reservedVal = typeof u.credits_reserved === 'number' ? u.credits_reserved : 0;
+      const remaining = Math.max(0, limitVal - usedVal - reservedVal);
       return {
         id: u.id,
         email: u.email,
         fullName: u.full_name,
         role,
+        plan: planId,
         creditLimit: limitVal,
         creditsUsed: usedVal,
-        creditsReserved: u.credits_reserved || 0,
+        creditsReserved: reservedVal,
         creditsRemaining: role === 'admin' ? 999999 : remaining,
         updatedAt: u.updated_at,
       };

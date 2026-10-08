@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getAllPlans, getActivePlans, savePlan, deletePlan } from './plans';
-import { saveCoupon, validateCoupon, deleteCoupon } from './coupons';
+import { getActivePlans, savePlan, deletePlan } from './plans';
+import { saveCoupon, validateCoupon, deleteCoupon, getAvailableCouponsForPlan } from './coupons';
 import { getSafeRazorpayConfig } from './razorpay';
 
 describe('Billing & Plan Management', () => {
@@ -46,6 +46,13 @@ describe('Billing & Plan Management', () => {
 
 describe('Coupon System & Validation', () => {
   it('validates percentage and fixed discounts securely', async () => {
+    // Clean up any stale test coupons
+    await deleteCoupon('TESTPERCENT20', 'admin@codatron.ai').catch(() => { });
+    await deleteCoupon('DISABLEDCODE', 'admin@codatron.ai').catch(() => { });
+    await deleteCoupon('EXPIREDCODE', 'admin@codatron.ai').catch(() => { });
+    await deleteCoupon('FLAT150', 'admin@codatron.ai').catch(() => { });
+    await deleteCoupon('PREMIUMONLY', 'admin@codatron.ai').catch(() => { });
+
     // 1. Valid percentage coupon
     await saveCoupon({
       code: 'TESTPERCENT20',
@@ -140,6 +147,40 @@ describe('Coupon System & Validation', () => {
     const invalidResult = await validateCoupon('NONEXISTENT_CODE', 'pro', 499);
     assert.equal(invalidResult.valid, false);
     assert.match(invalidResult.error || '', /invalid/i);
+  });
+
+  it('accurately evaluates available coupons for user checkout and plans', async () => {
+    // 1. Clean up test codes
+    await deleteCoupon('AVAIL_PRO_20', 'admin@codatron.ai').catch(() => { });
+    await deleteCoupon('AVAIL_TEAM_10', 'admin@codatron.ai').catch(() => { });
+
+    // Initially query
+    const initialAvailable = await getAvailableCouponsForPlan({ planId: 'pro', planPriceInr: 499 });
+    assert.ok(Array.isArray(initialAvailable));
+
+    // 2. Create coupon specifically for team premium
+    await saveCoupon({
+      code: 'AVAIL_TEAM_10',
+      description: 'Team exclusive',
+      discount_type: 'percent',
+      discount_value: 10,
+      is_active: true,
+      applicable_plans: ['premium'],
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
+    }, 'admin@codatron.ai');
+
+    // For pro plan (499), team coupon must NOT be available
+    const proAvailable = await getAvailableCouponsForPlan({ planId: 'pro', planPriceInr: 499 });
+    assert.ok(!proAvailable.some((c) => c.code === 'AVAIL_TEAM_10'), 'Team coupon should not be available for pro');
+
+    // For premium plan (999), team coupon MUST be available
+    const premiumAvailable = await getAvailableCouponsForPlan({ planId: 'premium', planPriceInr: 999 });
+    assert.ok(premiumAvailable.some((c) => c.code === 'AVAIL_TEAM_10'), 'Team coupon should be available for premium');
+
+    // 3. Delete the coupon -> should no longer be available for any plan
+    await deleteCoupon('AVAIL_TEAM_10', 'admin@codatron.ai');
+    const postDeleteAvailable = await getAvailableCouponsForPlan({ planId: 'premium', planPriceInr: 999 });
+    assert.ok(!postDeleteAvailable.some((c) => c.code === 'AVAIL_TEAM_10'), 'Deleted coupon must not be available');
   });
 });
 

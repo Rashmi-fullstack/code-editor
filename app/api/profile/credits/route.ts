@@ -28,13 +28,18 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       limit: balance.limit,
+      creditLimit: balance.limit,
       used: balance.used,
+      creditsUsed: balance.used,
       remaining: balance.remaining,
+      creditsRemaining: balance.remaining,
       reserved: balance.reserved,
+      creditsReserved: balance.reserved,
       createdAt: balance.createdAt,
       isAdmin: Boolean(balance.isAdmin),
       isUnlimited: Boolean(balance.isAdmin),
       plan: balance.plan || 'free',
+      planName: balance.planName || (balance.plan === 'pro' ? 'Developer Pro' : balance.plan === 'premium' ? 'Team Premium' : 'Starter Free'),
     });
   } catch (err) {
     console.error('[Credits API] Error:', err);

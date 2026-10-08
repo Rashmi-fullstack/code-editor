@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -12,9 +12,6 @@ import {
   Lock,
   CreditCard,
   Sparkles,
-  ShieldCheck,
-  AlertCircle,
-  HelpCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +43,8 @@ function CheckoutContent() {
     finalPrice: number;
   } | null>(null);
   const [validatingCoupon, setValidatingCoupon] = useState(false);
+  const [checkingCoupons, setCheckingCoupons] = useState(true);
+  const [hasAvailableCoupons, setHasAvailableCoupons] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [testOrderState, setTestOrderState] = useState<{
     orderId: string;
@@ -118,19 +117,11 @@ function CheckoutContent() {
           ],
         });
 
-  // 3. Auto-validate initial coupon if present in URL
-  useEffect(() => {
-    if (initialCoupon && selectedPlan) {
-      handleApplyCoupon(initialCoupon);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialCoupon, selectedPlan?.price_inr]);
-
   const originalPrice = selectedPlan.price_inr;
   const discountAmount = appliedCoupon ? appliedCoupon.discountAmount : 0;
   const finalPrice = appliedCoupon ? appliedCoupon.finalPrice : originalPrice;
 
-  // 4. Server-side coupon validation
+  // 3. Server-side coupon validation
   const handleApplyCoupon = async (codeToValidate: string = couponCode) => {
     const code = codeToValidate.trim().toUpperCase();
     if (!code) {
@@ -175,7 +166,86 @@ function CheckoutContent() {
     toast.info('Coupon removed.');
   };
 
-  // 5. Complete Payment Initiation & Verification Flow
+  // 4. Auto-validate initial coupon if present in URL
+  useEffect(() => {
+    if (initialCoupon && selectedPlan) {
+      const timer = setTimeout(() => {
+        void handleApplyCoupon(initialCoupon);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCoupon, selectedPlan?.price_inr]);
+
+  // 5. Dynamic server-authoritative coupon availability check
+  const checkCouponAvailability = useCallback(async () => {
+    try {
+      setCheckingCoupons(true);
+      const res = await fetch(
+        `/api/billing/coupon/available?planId=${encodeURIComponent(selectedPlan.id)}&planPrice=${encodeURIComponent(originalPrice)}`,
+        { cache: 'no-store' }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const available = Boolean(data.hasAvailable && data.availableCount > 0);
+        setHasAvailableCoupons(available);
+        if (!available && appliedCoupon) {
+          setAppliedCoupon(null);
+          setCouponCode('');
+        }
+      } else {
+        setHasAvailableCoupons(false);
+      }
+    } catch (err) {
+      console.warn('Failed to check coupon availability:', err);
+      setHasAvailableCoupons(false);
+    } finally {
+      setCheckingCoupons(false);
+    }
+  }, [selectedPlan.id, originalPrice, appliedCoupon]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    async function loadInitialAvailability() {
+      try {
+        const res = await fetch(
+          `/api/billing/coupon/available?planId=${encodeURIComponent(selectedPlan.id)}&planPrice=${encodeURIComponent(originalPrice)}`,
+          { cache: 'no-store' }
+        );
+        if (isCancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          const available = Boolean(data.hasAvailable && data.availableCount > 0);
+          setHasAvailableCoupons(available);
+          if (!available && appliedCoupon) {
+            setAppliedCoupon(null);
+            setCouponCode('');
+          }
+        } else {
+          setHasAvailableCoupons(false);
+        }
+      } catch (err) {
+        console.warn('Failed to check coupon availability:', err);
+        if (!isCancelled) setHasAvailableCoupons(false);
+      } finally {
+        if (!isCancelled) setCheckingCoupons(false);
+      }
+    }
+    void loadInitialAvailability();
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedPlan.id, originalPrice, user?.id, appliedCoupon]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void checkCouponAvailability();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [checkCouponAvailability]);
+
+  // 6. Complete Payment Initiation & Verification Flow
   const handleInitiatePayment = async () => {
     if (!user) {
       toast.error('Please log in before completing payment.');
@@ -202,14 +272,28 @@ function CheckoutContent() {
 
       const orderData = await res.json();
       if (!res.ok || !orderData.success) {
-        throw new Error(orderData.message || 'Failed to initialize payment.');
+        if (appliedCoupon) {
+          setAppliedCoupon(null);
+          setCouponCode('');
+          await checkCouponAvailability();
+        }
+        const errorMsg = orderData.message || 'Failed to initialize payment.';
+        toast.error(errorMsg.toLowerCase().includes('coupon') ? 'Coupon is no longer available.' : errorMsg);
+        setIsProcessing(false);
+        return;
       }
 
       const { order } = orderData;
       setTestOrderState({ orderId: order.orderId, keyId: order.keyId });
 
       // Step B: Launch Razorpay Standard Checkout
-      if (typeof window !== 'undefined' && (window as any).Razorpay) {
+      type RazorpayConstructor = new (options: unknown) => {
+        open: () => void;
+        on: (event: string, handler: (resp: { error?: { description?: string } }) => void) => void;
+      };
+      const RazorpayClient = (window as unknown as { Razorpay?: RazorpayConstructor }).Razorpay;
+
+      if (typeof window !== 'undefined' && RazorpayClient) {
         const options = {
           key: order.keyId,
           amount: order.amountPaise,
@@ -269,8 +353,8 @@ function CheckoutContent() {
           },
         };
 
-        const rzp = new (window as any).Razorpay(options);
-        rzp.on('payment.failed', function (resp: any) {
+        const rzp = new RazorpayClient(options);
+        rzp.on('payment.failed', function (resp: { error?: { description?: string } }) {
           setIsProcessing(false);
           toast.error(
             `Payment failed: ${resp.error?.description || 'Your transaction could not be completed.'}`
@@ -444,50 +528,62 @@ function CheckoutContent() {
               </div>
 
               {/* Promo Coupon Section */}
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-                  <Tag className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Have a promo coupon?</span>
-                </label>
+              {checkingCoupons ? (
+                <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.02] px-3.5 py-3 text-xs text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />
+                  <span>Checking coupon availability…</span>
+                </div>
+              ) : !hasAvailableCoupons && !appliedCoupon ? (
+                <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.02] px-3.5 py-3 text-xs text-zinc-300">
+                  <span className="text-sm leading-none">🏷️</span>
+                  <span>No coupon available right now.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                    <Tag className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Have a promo coupon?</span>
+                  </label>
 
-                {appliedCoupon ? (
-                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-emerald-400 font-mono">{appliedCoupon.code}</span>
-                      <p className="text-[10px] text-emerald-300/80">
-                        {appliedCoupon.discountType === 'percent'
-                          ? `${appliedCoupon.discountValue}% Discount Applied`
-                          : `₹${appliedCoupon.discountValue} Off`}
-                      </p>
+                  {appliedCoupon ? (
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-emerald-400 font-mono">{appliedCoupon.code}</span>
+                        <p className="text-[10px] text-emerald-300/80">
+                          {appliedCoupon.discountType === 'percent'
+                            ? `${appliedCoupon.discountValue}% Discount Applied`
+                            : `₹${appliedCoupon.discountValue} Off`}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRemoveCoupon}
+                        className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 h-7 px-2"
+                      >
+                        Remove
+                      </Button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleRemoveCoupon}
-                      className="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 h-7 px-2"
-                    >
-                      Remove
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={couponCode}
-                      onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. WELCOME20"
-                      className="bg-black/50 border-white/10 text-amber-300 font-mono text-xs h-9 uppercase rounded-xl"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => handleApplyCoupon()}
-                      disabled={validatingCoupon}
-                      className="h-9 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs px-3 shrink-0"
-                    >
-                      {validatingCoupon ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply'}
-                    </Button>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={couponCode}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. WELCOME20"
+                        className="bg-black/50 border-white/10 text-amber-300 font-mono text-xs h-9 uppercase rounded-xl"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => handleApplyCoupon()}
+                        disabled={validatingCoupon}
+                        className="h-9 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs px-3 shrink-0"
+                      >
+                        {validatingCoupon ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Price Calculation Breakdown */}
               <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-4 space-y-2.5 text-xs">

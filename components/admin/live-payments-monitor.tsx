@@ -767,7 +767,7 @@ export function LivePaymentsMonitor() {
               {/* Gateway References */}
               <div className="space-y-2 p-3.5 rounded-xl border border-white/8 bg-black/40">
                 <p className="text-[10px] uppercase font-semibold text-zinc-400">Razorpay Gateway References</p>
-                
+
                 <div className="flex items-center justify-between gap-2 bg-white/[0.02] p-2 rounded-lg border border-white/6">
                   <span className="text-[11px] text-zinc-400">Razorpay Order ID:</span>
                   <div className="flex items-center gap-1.5 font-mono text-zinc-200 text-xs">

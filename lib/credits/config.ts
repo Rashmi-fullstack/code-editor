@@ -25,7 +25,7 @@ export const CREDIT_COSTS = {
 export type OperationCostTier = keyof typeof CREDIT_COSTS;
 
 export interface PlanTier {
-  id: 'free' | 'pro' | 'business' | 'admin';
+  id: 'free' | 'pro' | 'business' | 'premium' | 'admin';
   name: string;
   credits: number; // -1 for unlimited
   priceMonthly: number;
@@ -53,13 +53,13 @@ export const CODATRON_PLANS: Record<string, PlanTier> = {
   pro: {
     id: 'pro',
     name: 'Developer Pro',
-    credits: 1000,
-    priceMonthly: 20,
+    credits: 500,
+    priceMonthly: 499,
     badge: 'Most Popular',
     description: 'For active builders creating production-ready applications.',
     features: [
-      '1,000 Codatron AI credits / month',
-      'Up to 100 AI generation & refactoring operations',
+      '500 Codatron AI credits / month',
+      'Up to 50 AI generation & refactoring operations',
       'High-priority generation queues & low latency',
       'Autonomous Product Manager planning & roadmaps',
       'Custom BYOK personal API key integration',
@@ -68,13 +68,28 @@ export const CODATRON_PLANS: Record<string, PlanTier> = {
   },
   business: {
     id: 'business',
-    name: 'Team / Business',
-    credits: 5000,
-    priceMonthly: 80,
+    name: 'Team Premium',
+    credits: 1200,
+    priceMonthly: 999,
     badge: 'Best Value',
     description: 'For teams and studios shipping complex multi-page applications.',
     features: [
-      '5,000 Codatron AI credits / month',
+      '1,200 Codatron AI credits / month',
+      'Multi-seat collaboration & shared workspaces',
+      'Deep multi-file refactoring & automatic repair loops',
+      'Dedicated engineering support & custom models',
+      'All features included in Developer Pro',
+    ],
+  },
+  premium: {
+    id: 'premium',
+    name: 'Team Premium',
+    credits: 1200,
+    priceMonthly: 999,
+    badge: 'Best Value',
+    description: 'For teams and studios shipping complex multi-page applications.',
+    features: [
+      '1,200 Codatron AI credits / month',
       'Multi-seat collaboration & shared workspaces',
       'Deep multi-file refactoring & automatic repair loops',
       'Dedicated engineering support & custom models',

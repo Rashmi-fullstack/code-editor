@@ -103,11 +103,21 @@ export async function GET(request: Request) {
           privileged.from('ai_token_usage').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         ]);
 
-        const remainingCredits = Math.max(0, (user.credit_limit || 20) - (user.credits_used || 0));
-        const isAdmin = adminEmails.includes(user.email?.toLowerCase());
+        const isAdmin = adminEmails.includes(user.email?.toLowerCase()) || user.role === 'admin';
         const userRole = user.role || (isAdmin ? 'admin' : 'user');
         const userStatus = user.status || 'active';
         const userPlan = user.plan || (userRole === 'admin' ? 'admin' : 'free');
+
+        const planAllowance =
+          userPlan === 'pro'
+            ? 500
+            : userPlan === 'premium' || userPlan === 'business'
+              ? 1200
+              : 100;
+
+        const effectiveLimit = userRole === 'admin' ? 999999 : Math.max(user.credit_limit || 0, planAllowance);
+        const creditsUsed = typeof user.credits_used === 'number' ? user.credits_used : 0;
+        const remainingCredits = Math.max(0, effectiveLimit - creditsUsed);
 
         return {
           id: user.id,
@@ -117,8 +127,8 @@ export async function GET(request: Request) {
           role: userRole,
           status: userStatus,
           plan: userPlan,
-          creditLimit: user.credit_limit || 20,
-          creditsUsed: user.credits_used || 0,
+          creditLimit: userRole === 'admin' ? 999999 : effectiveLimit,
+          creditsUsed,
           creditsRemaining: userRole === 'admin' ? 999999 : remainingCredits,
           projectCount: projectsCountRes.count ?? 0,
           aiRequestCount: aiUsageRes.count ?? 0,

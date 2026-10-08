@@ -24,27 +24,7 @@ export interface CouponValidationResult {
   finalPrice?: number;
 }
 
-const FALLBACK_COUPONS: DbCoupon[] = [
-  {
-    id: 'f87a3b12-9c10-449e-b9e7-5e60882ef941',
-    code: 'WELCOME20',
-    description: '20% Welcome discount for new developers',
-    discount_type: 'percent',
-    discount_value: 20,
-    max_redemptions: 100,
-    redemptions_count: 0,
-    per_user_limit: 1,
-    min_plan_amount: 0,
-    applicable_plans: [] as any,
-    expires_at: '2026-12-31T23:59:59Z',
-    is_active: true,
-    deleted_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
-
-let cachedCoupons: DbCoupon[] = [...FALLBACK_COUPONS];
+let cachedCoupons: DbCoupon[] = [];
 
 /**
  * Format coupon expiration date consistently without timezone/date-shifting artifacts.
@@ -166,7 +146,7 @@ export async function saveCoupon(
         max_redemptions: maxRedemptions,
         per_user_limit: perUserLimit,
         min_plan_amount: minPlanAmount,
-        applicable_plans: (input.applicable_plans || []) as any,
+        applicable_plans: (input.applicable_plans || []) as unknown as DbCoupon['applicable_plans'],
         expires_at: formattedExpiresAt,
         is_active: input.is_active !== false,
         updated_at: new Date().toISOString(),
@@ -202,56 +182,93 @@ export async function saveCoupon(
     return updatedCoupon;
   } else {
     // 2. CREATE NEW COUPON
-    // Check if code already exists
+    // Check if code already exists in PostgreSQL
     const { data: duplicate } = await privileged
       .from('coupons')
-      .select('id, code')
+      .select('id, code, deleted_at')
       .ilike('code', code)
-      .is('deleted_at', null)
       .maybeSingle();
 
-    if (duplicate) {
+    if (duplicate && !duplicate.deleted_at) {
       throw new Error(`Coupon code "${code}" already exists.`);
     }
 
-    const { data: newCoupon, error: insertErr } = await privileged
-      .from('coupons')
-      .insert({
-        code,
-        description: input.description ?? null,
-        discount_type: input.discount_type,
-        discount_value: discountValue,
-        max_redemptions: maxRedemptions,
-        redemptions_count: 0,
-        per_user_limit: perUserLimit,
-        min_plan_amount: minPlanAmount,
-        applicable_plans: (input.applicable_plans || []) as any,
-        expires_at: formattedExpiresAt,
-        is_active: input.is_active !== false,
-      })
-      .select('*')
-      .single();
+    let savedCoupon: DbCoupon | null = null;
 
-    if (insertErr || !newCoupon) {
-      console.error('[Insert Coupon Error]:', insertErr);
-      throw new Error(insertErr?.message || 'Failed to create coupon in database.');
+    if (duplicate && duplicate.deleted_at) {
+      // Reactivate previously soft-deleted coupon row with new configuration
+      const { data: reactivatedCoupon, error: reactivateErr } = await privileged
+        .from('coupons')
+        .update({
+          code,
+          description: input.description ?? null,
+          discount_type: input.discount_type,
+          discount_value: discountValue,
+          max_redemptions: maxRedemptions,
+          redemptions_count: 0,
+          per_user_limit: perUserLimit,
+          min_plan_amount: minPlanAmount,
+          applicable_plans: (input.applicable_plans || []) as unknown as DbCoupon['applicable_plans'],
+          expires_at: formattedExpiresAt,
+          is_active: input.is_active !== false,
+          deleted_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', duplicate.id)
+        .select('*')
+        .single();
+
+      if (reactivateErr || !reactivatedCoupon) {
+        console.error('[Reactivate Coupon Error]:', reactivateErr);
+        throw new Error(reactivateErr?.message || 'Failed to create coupon in database.');
+      }
+      savedCoupon = reactivatedCoupon;
+    } else {
+      const { data: newCoupon, error: insertErr } = await privileged
+        .from('coupons')
+        .insert({
+          code,
+          description: input.description ?? null,
+          discount_type: input.discount_type,
+          discount_value: discountValue,
+          max_redemptions: maxRedemptions,
+          redemptions_count: 0,
+          per_user_limit: perUserLimit,
+          min_plan_amount: minPlanAmount,
+          applicable_plans: (input.applicable_plans || []) as unknown as DbCoupon['applicable_plans'],
+          expires_at: formattedExpiresAt,
+          is_active: input.is_active !== false,
+        })
+        .select('*')
+        .single();
+
+      if (insertErr || !newCoupon) {
+        console.error('[Insert Coupon Error]:', insertErr);
+        throw new Error(insertErr?.message || 'Failed to create coupon in database.');
+      }
+      savedCoupon = newCoupon;
     }
 
-    cachedCoupons.unshift(newCoupon);
+    const existingIdx = cachedCoupons.findIndex((c) => c.id === savedCoupon!.id);
+    if (existingIdx >= 0) {
+      cachedCoupons[existingIdx] = savedCoupon;
+    } else {
+      cachedCoupons.unshift(savedCoupon);
+    }
 
     await logAdminAudit({
       adminUserId,
       adminEmail,
       action: 'COUPON_CREATED',
       targetType: 'coupon',
-      targetId: newCoupon.id,
+      targetId: savedCoupon.id,
       details: {
-        code: newCoupon.code,
-        discount: `${newCoupon.discount_value} ${newCoupon.discount_type}`,
+        code: savedCoupon.code,
+        discount: `${savedCoupon.discount_value} ${savedCoupon.discount_type}`,
       },
     });
 
-    return newCoupon;
+    return savedCoupon;
   }
 }
 
@@ -266,21 +283,27 @@ export async function deleteCoupon(
 ): Promise<boolean> {
   const privileged = createPrivilegedClient();
 
-  const { error } = await privileged
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(couponId.trim());
+  let updateQuery = privileged
     .from('coupons')
     .update({
       is_active: false,
       deleted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    })
-    .eq('id', couponId);
+    });
+
+  updateQuery = isUuid
+    ? updateQuery.eq('id', couponId.trim())
+    : updateQuery.eq('code', couponId.trim().toUpperCase());
+
+  const { error } = await updateQuery;
 
   if (error) {
     console.error('[Delete Coupon Error]:', error);
     throw new Error(error.message || 'Failed to delete coupon.');
   }
 
-  cachedCoupons = cachedCoupons.filter((c) => c.id !== couponId);
+  cachedCoupons = cachedCoupons.filter((c) => c.id !== couponId && c.code !== couponId.toUpperCase());
 
   await logAdminAudit({
     adminUserId,
@@ -291,6 +314,74 @@ export async function deleteCoupon(
   });
 
   return true;
+}
+
+/**
+ * Queries and evaluates all coupons to return only those that are currently active,
+ * unexpired, non-deleted, and usable by the given user for the selected plan.
+ */
+export async function getAvailableCouponsForPlan(params: {
+  planId?: string;
+  planPriceInr?: number;
+  userId?: string;
+}): Promise<DbCoupon[]> {
+  const allCoupons = await getAllCoupons();
+  if (!allCoupons || allCoupons.length === 0) {
+    return [];
+  }
+
+  const usable: DbCoupon[] = [];
+  const privileged = createPrivilegedClient();
+
+  for (const coupon of allCoupons) {
+    // 1. Soft-deleted check
+    if (coupon.deleted_at) continue;
+
+    // 2. Active status check
+    if (!coupon.is_active) continue;
+
+    // 3. Expiration check
+    if (coupon.expires_at && isCouponExpired(coupon.expires_at)) continue;
+
+    // 4. Maximum redemptions limit
+    if (coupon.max_redemptions !== null && coupon.redemptions_count >= coupon.max_redemptions) continue;
+
+    // 5. Minimum plan price requirement
+    if (
+      params.planPriceInr !== undefined &&
+      coupon.min_plan_amount > 0 &&
+      params.planPriceInr < coupon.min_plan_amount
+    ) {
+      continue;
+    }
+
+    // 6. Plan-specific restrictions
+    const applicable = Array.isArray(coupon.applicable_plans) ? (coupon.applicable_plans as string[]) : [];
+    if (params.planId && applicable.length > 0 && !applicable.includes(params.planId)) {
+      continue;
+    }
+
+    // 7. Per-user redemption limit
+    if (params.userId && coupon.per_user_limit > 0) {
+      try {
+        const { count } = await privileged
+          .from('coupon_redemptions')
+          .select('*', { count: 'exact', head: true })
+          .eq('coupon_id', coupon.id)
+          .eq('user_id', params.userId);
+
+        if (count !== null && count >= coupon.per_user_limit) {
+          continue;
+        }
+      } catch {
+        // Fallback gracefully in case redemptions table is unavailable
+      }
+    }
+
+    usable.push(coupon);
+  }
+
+  return usable;
 }
 
 /**
@@ -312,7 +403,7 @@ export async function validateCoupon(
   const coupon = allCoupons.find((c) => c.code === cleanCode && !c.deleted_at);
 
   if (!coupon) {
-    return { valid: false, error: 'Invalid coupon code.' };
+    return { valid: false, error: 'Invalid or unavailable coupon.' };
   }
 
   if (!coupon.is_active) {
@@ -320,11 +411,11 @@ export async function validateCoupon(
   }
 
   if (coupon.expires_at && isCouponExpired(coupon.expires_at)) {
-    return { valid: false, error: 'This coupon has expired.' };
+    return { valid: false, error: 'Coupon has expired.' };
   }
 
   if (coupon.max_redemptions !== null && coupon.redemptions_count >= coupon.max_redemptions) {
-    return { valid: false, error: 'This coupon has reached its maximum redemptions limit.' };
+    return { valid: false, error: 'Coupon redemption limit reached.' };
   }
 
   if (coupon.min_plan_amount > 0 && planPriceInr < coupon.min_plan_amount) {
@@ -336,7 +427,7 @@ export async function validateCoupon(
 
   const applicable = Array.isArray(coupon.applicable_plans) ? (coupon.applicable_plans as string[]) : [];
   if (applicable.length > 0 && !applicable.includes(planId)) {
-    return { valid: false, error: 'This coupon is not valid for the selected plan.' };
+    return { valid: false, error: 'Coupon is not valid for the selected plan.' };
   }
 
   // Check user redemption limit if userId provided
@@ -352,7 +443,7 @@ export async function validateCoupon(
       if (count && count >= coupon.per_user_limit) {
         return {
           valid: false,
-          error: `You have already redeemed this coupon the maximum allowed number of times (${coupon.per_user_limit}).`,
+          error: `You have already used this coupon.`,
         };
       }
     } catch {

@@ -3,7 +3,8 @@ import Razorpay from 'razorpay';
 import { getAdminSettings, updateAdminSettings } from '@/lib/admin/settings';
 import { logAdminAudit } from '@/lib/admin/telemetry';
 import { createPrivilegedClient } from '@/lib/admin/privileged-client';
-import type { SubscriptionPlan, PaymentRecord, DbCoupon } from '@/lib/types/database';
+import { validateCoupon } from '@/lib/billing/coupons';
+import type { DbCoupon } from '@/lib/types/database';
 
 export interface SafeRazorpayConfig {
   keyId: string | null;
@@ -129,7 +130,7 @@ export async function updateRazorpayConfig(
     updates.razorpay_enabled = Boolean(params.isEnabled);
   }
 
-  await updateAdminSettings(updates as any, adminEmail, adminUserId);
+  await updateAdminSettings(updates as Parameters<typeof updateAdminSettings>[0], adminEmail, adminUserId);
 
   await logAdminAudit({
     adminUserId,
@@ -174,65 +175,21 @@ export async function createPaymentOrder(params: CreateOrderParams): Promise<Cre
   let discountAmount = 0;
   let validatedCoupon: DbCoupon | null = null;
 
-  // 2. Server-side coupon verification
+  // 2. Authoritative Server-side coupon verification
   if (couponCode && couponCode.trim()) {
-    const cleanCode = couponCode.trim().toUpperCase();
-    const { data: coupon, error: couponErr } = await privileged
-      .from('coupons')
-      .select('*')
-      .eq('code', cleanCode)
-      .is('deleted_at', null)
-      .maybeSingle();
+    const couponValidation = await validateCoupon(
+      couponCode.trim(),
+      plan.id,
+      originalPrice,
+      userId
+    );
 
-    if (couponErr || !coupon) {
-      throw new Error('Invalid coupon code.');
+    if (!couponValidation.valid || !couponValidation.coupon) {
+      throw new Error(couponValidation.error || 'Coupon is no longer available.');
     }
 
-    if (!coupon.is_active) {
-      throw new Error('This coupon code is currently disabled.');
-    }
-
-    if (coupon.expires_at) {
-      const match = coupon.expires_at.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      const isExpired = match
-        ? Date.now() > new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 23, 59, 59, 999).getTime()
-        : Date.now() > new Date(coupon.expires_at).getTime();
-
-      if (isExpired) {
-        throw new Error('This coupon code has expired.');
-      }
-    }
-
-    if (coupon.max_redemptions && coupon.redemptions_count >= coupon.max_redemptions) {
-      throw new Error('Coupon usage limit has been reached.');
-    }
-
-    // Check plan restriction
-    if (coupon.applicable_plans && Array.isArray(coupon.applicable_plans) && coupon.applicable_plans.length > 0) {
-      if (!coupon.applicable_plans.includes(planId)) {
-        throw new Error('This coupon cannot be used for this plan.');
-      }
-    }
-
-    // Check per-user limit
-    const { count: userRedemptionsCount } = await privileged
-      .from('coupon_redemptions')
-      .select('id', { count: 'exact', head: true })
-      .eq('coupon_id', coupon.id)
-      .eq('user_id', userId);
-
-    if ((userRedemptionsCount || 0) >= (coupon.per_user_limit || 1)) {
-      throw new Error('You have already used this coupon.');
-    }
-
-    // Calculate discount amount
-    if (coupon.discount_type === 'percent') {
-      discountAmount = Math.round(((originalPrice * coupon.discount_value) / 100) * 100) / 100;
-    } else {
-      discountAmount = Math.min(originalPrice, Number(coupon.discount_value));
-    }
-
-    validatedCoupon = coupon;
+    discountAmount = couponValidation.discountAmount ?? 0;
+    validatedCoupon = couponValidation.coupon;
   }
 
   const finalPrice = Math.max(0, Math.round((originalPrice - discountAmount) * 100) / 100);
@@ -262,8 +219,9 @@ export async function createPaymentOrder(params: CreateOrderParams): Promise<Cre
     });
 
     razorpayOrderId = order.id;
-  } catch (err: any) {
-    console.warn('[Razorpay API Warning] Generating test order for development mode:', err?.message);
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn('[Razorpay API Warning] Generating test order for development mode:', errorMsg);
     razorpayOrderId = `order_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
 
@@ -348,7 +306,7 @@ export async function verifyAndFulfillPayment(params: VerifyPaymentParams): Prom
       paymentId: payment.id,
       razorpayPaymentId: payment.razorpay_payment_id || razorpayPaymentId,
       planId: payment.plan_id,
-      planName: (payment.metadata as any)?.planName || payment.plan_id,
+      planName: ((payment.metadata as Record<string, unknown> | null)?.planName as string) || payment.plan_id,
       creditsAdded: 0,
       newCreditLimit: currentProfile?.credit_limit || 100,
       finalAmount: Number(payment.amount),
@@ -420,9 +378,8 @@ export async function verifyAndFulfillPayment(params: VerifyPaymentParams): Prom
     .eq('id', userId)
     .single();
 
-  const currentLimit = userProfile?.credit_limit || 100;
-  // If moving to a new paid tier, grant full plan allowance
-  const newCreditLimit = Math.max(currentLimit, planCredits);
+  // Grant exact monthly credit allowance according to the subscribed plan
+  const newCreditLimit = planCredits;
 
   await privileged
     .from('profiles')

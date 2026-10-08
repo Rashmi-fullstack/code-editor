@@ -12,23 +12,28 @@ import {
   reserveCredit,
   finalizeCredit,
   releaseCredit,
-  type UserCreditBalance,
 } from './manager';
 
 // Mock Supabase Client implementation for comprehensive unit & concurrency testing
-function createMockSupabase(initialProfile: {
-  id: string;
-  email: string;
-  role: 'user' | 'admin';
-  credit_limit: number;
-  credits_used: number;
-  credits_reserved: number;
-  status?: 'active' | 'suspended';
-}) {
+function createMockSupabase(
+  initialProfile: {
+    id: string;
+    email: string;
+    role: 'user' | 'admin';
+    credit_limit: number;
+    credits_used: number;
+    credits_reserved: number;
+    plan?: string;
+    status?: 'active' | 'suspended';
+  },
+  initialSubscription?: any
+) {
   const profile = { ...initialProfile };
+  const subscription = initialSubscription ? { ...initialSubscription } : null;
 
   const client: any = {
     _profile: profile,
+    _subscription: subscription,
     from: (table: string) => {
       if (table !== 'profiles') throw new Error(`Table ${table} not mocked`);
       return {
@@ -367,3 +372,115 @@ test('Smooth migration: Legacy profiles with credit_limit < 100 are upgraded to 
   assert.equal(balance.remaining, 99);
   assert.equal(supabase._profile.credit_limit, 100);
 });
+
+test('Developer Pro: Active subscription grants 500 credit limit and calculates 490 remaining from 10 used', async () => {
+  const supabase = createMockSupabase(
+    {
+      id: 'arnab-user-pro',
+      email: 'arnabjava12@gmail.com',
+      role: 'user',
+      plan: 'pro',
+      credit_limit: 100, // Legacy desynchronized value from Google sign-in
+      credits_used: 10,  // 10 credits consumed
+      credits_reserved: 0,
+    },
+    {
+      id: 'sub-pro-1',
+      user_id: 'arnab-user-pro',
+      plan_id: 'pro',
+      status: 'active',
+      current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+    }
+  );
+
+  const balance = await getUserCreditBalance(supabase, 'arnab-user-pro', 'arnabjava12@gmail.com');
+
+  // Must heal and report authoritative 500 limit, 10 used, 490 remaining
+  assert.equal(balance.limit, 500);
+  assert.equal(balance.used, 10);
+  assert.equal(balance.remaining, 490);
+  assert.equal(balance.plan, 'pro');
+  assert.equal(balance.planName, 'Developer Pro');
+  assert.equal(supabase._profile.credit_limit, 500);
+});
+
+test('Team Premium: Active subscription grants 1,200 credit limit and calculates 1,150 remaining from 50 used', async () => {
+  const supabase = createMockSupabase(
+    {
+      id: 'team-user-1',
+      email: 'team@example.com',
+      role: 'user',
+      plan: 'premium',
+      credit_limit: 100,
+      credits_used: 50,
+      credits_reserved: 0,
+    },
+    {
+      id: 'sub-team-1',
+      user_id: 'team-user-1',
+      plan_id: 'premium',
+      status: 'active',
+      current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+    }
+  );
+
+  const balance = await getUserCreditBalance(supabase, 'team-user-1', 'team@example.com');
+
+  assert.equal(balance.limit, 1200);
+  assert.equal(balance.used, 50);
+  assert.equal(balance.remaining, 1150);
+  assert.equal(balance.plan, 'premium');
+  assert.equal(balance.planName, 'Team Premium');
+  assert.equal(supabase._profile.credit_limit, 1200);
+});
+
+test('Subscription Expiration: Expired paid plan falls back to Starter Free 100 credits', async () => {
+  const supabase = createMockSupabase(
+    {
+      id: 'expired-user-1',
+      email: 'expired@example.com',
+      role: 'user',
+      plan: 'pro',
+      credit_limit: 500,
+      credits_used: 20,
+      credits_reserved: 0,
+    },
+    {
+      id: 'sub-pro-expired',
+      user_id: 'expired-user-1',
+      plan_id: 'pro',
+      status: 'active',
+      current_period_end: new Date(Date.now() - 86400000).toISOString(), // Expired 1 day ago
+    }
+  );
+
+  const balance = await getUserCreditBalance(supabase, 'expired-user-1');
+
+  // Must cleanly fallback to Free tier (100 credits)
+  assert.equal(balance.limit, 100);
+  assert.equal(balance.used, 20);
+  assert.equal(balance.remaining, 80);
+  assert.equal(balance.plan, 'free');
+  assert.equal(balance.planName, 'Starter Free');
+});
+
+test('Starter Free: Clean user with no subscription defaults to 100 credits and free plan', async () => {
+  const supabase = createMockSupabase({
+    id: 'free-user-1',
+    email: 'free@example.com',
+    role: 'user',
+    plan: 'free',
+    credit_limit: 100,
+    credits_used: 0,
+    credits_reserved: 0,
+  });
+
+  const balance = await getUserCreditBalance(supabase, 'free-user-1');
+
+  assert.equal(balance.limit, 100);
+  assert.equal(balance.used, 0);
+  assert.equal(balance.remaining, 100);
+  assert.equal(balance.plan, 'free');
+  assert.equal(balance.planName, 'Starter Free');
+});
+

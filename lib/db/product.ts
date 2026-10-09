@@ -2,6 +2,42 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../types/database';
 import type { ProductPlan, DevelopmentTask } from '../ai/product-planner';
 
+/**
+ * Validates whether a ProductPlan is a genuine, user-generated product plan,
+ * and not a fabricated, boilerplate, or empty placeholder plan.
+ */
+export function isRealPlan(plan: ProductPlan | null | undefined): boolean {
+  if (!plan) return false;
+
+  const serialized = JSON.stringify(plan).toLowerCase();
+  const dummySignatures = [
+    'construct a detailed phased',
+    'fragmented workflows',
+    'deliver high-performance capabilities',
+    'sub-second latency',
+    'build an intuitive and robust solution',
+    'modern digital application users',
+    'exceptional user satisfaction',
+    'verified feature completion',
+    'construct a detailed phased workspace layout',
+    'interactive state & data management',
+    'scaffold construct a detailed phased component layout',
+  ];
+
+  for (const sig of dummySignatures) {
+    if (serialized.includes(sig)) {
+      return false;
+    }
+  }
+
+  // Must have real, non-empty content in at least one primary section
+  const hasSummary = Boolean(plan.overview?.summary && plan.overview.summary.trim().length > 0);
+  const hasPurpose = Boolean(plan.vision?.purpose && plan.vision.purpose.trim().length > 0);
+  const hasFeatures = Boolean(Array.isArray(plan.features) && plan.features.length > 0);
+
+  return hasSummary || hasPurpose || hasFeatures;
+}
+
 export async function getProductPlanFromDb(
   supabase: SupabaseClient<Database>,
   projectId: string
@@ -14,10 +50,14 @@ export async function getProductPlanFromDb(
         const raw = localStorage.getItem(`codatron_plan_${projectId}`);
         if (raw) {
           const parsed = JSON.parse(raw);
-          localPlan = parsed;
-          localTasks = parsed.developmentTasks || [];
+          if (isRealPlan(parsed)) {
+            localPlan = parsed;
+            localTasks = parsed.developmentTasks || [];
+          } else {
+            localStorage.removeItem(`codatron_plan_${projectId}`);
+          }
         }
-      } catch {}
+      } catch { }
     }
 
     const { data: planRow, error: planErr } = await supabase
@@ -27,7 +67,7 @@ export async function getProductPlanFromDb(
       .maybeSingle();
 
     if (planErr || !planRow) {
-      if (localPlan) {
+      if (localPlan && isRealPlan(localPlan)) {
         return { plan: localPlan, tasks: localTasks, error: null };
       }
       return { plan: null, tasks: [], error: planErr ? new Error(planErr.message) : null };
@@ -65,30 +105,88 @@ export async function getProductPlanFromDb(
     }));
 
     const planRowRecord = planRow as unknown as Record<string, unknown>;
+    const rawVision = (planRow.vision || {}) as Record<string, unknown>;
+    let localWorkspaceName: string | undefined;
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(`codatron_product_name_${projectId}`);
+        if (cached && cached.trim().toLowerCase() === 'netflix') {
+          localStorage.removeItem(`codatron_product_name_${projectId}`);
+        } else {
+          localWorkspaceName = cached?.trim() || undefined;
+        }
+      } catch { }
+    }
+
+    const rawVisionName = typeof rawVision.workspaceName === 'string' ? rawVision.workspaceName.trim() : '';
+    const cleanVisionName = rawVisionName.toLowerCase() !== 'netflix' ? rawVisionName : '';
+
+    const resolvedWorkspaceName = cleanVisionName || localWorkspaceName || undefined;
+
+    if (resolvedWorkspaceName && typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`codatron_product_name_${projectId}`, resolvedWorkspaceName);
+      } catch { }
+    }
+
+    const blueprint = ((rawVision.__blueprint || {}) as Record<string, unknown>);
+
     const fullPlan: ProductPlan = {
-      overview: (planRowRecord.overview as ProductPlan['overview']) || {
+      originalIdea: (localPlan?.originalIdea || blueprint.originalIdea || (planRowRecord.original_idea as string) || '') as string,
+      overview: (localPlan?.overview || planRowRecord.overview as ProductPlan['overview']) || {
         summary: '',
         targetAudience: '',
         keyDifferentiator: '',
       },
-      vision: planRow.vision as unknown as ProductPlan['vision'],
-      personas: (planRow.personas as unknown as ProductPlan['personas']) || [],
-      mvp: (planRow.mvp as unknown as ProductPlan['mvp']) || { mustHave: [], exclusions: [] },
-      features: (planRow.features as unknown as ProductPlan['features']) || [],
-      userStories: (planRowRecord.user_stories as ProductPlan['userStories']) || [],
-      acceptanceCriteria: (planRowRecord.acceptance_criteria as ProductPlan['acceptanceCriteria']) || [],
-      roadmap: (planRow.roadmap as unknown as ProductPlan['roadmap']) || [],
+      analysis: localPlan?.analysis || (blueprint.analysis as ProductPlan['analysis']),
+      snapshot: localPlan?.snapshot || (blueprint.snapshot as ProductPlan['snapshot']),
+      userJourneys: localPlan?.userJourneys || (blueprint.userJourneys as ProductPlan['userJourneys']),
+      technicalArchitecture: localPlan?.technicalArchitecture || (blueprint.technicalArchitecture as ProductPlan['technicalArchitecture']),
+      recommendedStack: localPlan?.recommendedStack || (blueprint.recommendedStack as ProductPlan['recommendedStack']),
+      systemComponents: localPlan?.systemComponents || (blueprint.systemComponents as ProductPlan['systemComponents']),
+      teamRequirement: localPlan?.teamRequirement || (blueprint.teamRequirement as ProductPlan['teamRequirement']),
+      timeline: localPlan?.timeline || (blueprint.timeline as ProductPlan['timeline']),
+      demoArchitecture: localPlan?.demoArchitecture || (blueprint.demoArchitecture as ProductPlan['demoArchitecture']),
+      dataModel: localPlan?.dataModel || (blueprint.dataModel as ProductPlan['dataModel']),
+      risks: localPlan?.risks || (blueprint.risks as ProductPlan['risks']),
+      assumptions: localPlan?.assumptions || (blueprint.assumptions as ProductPlan['assumptions']),
+      openQuestions: localPlan?.openQuestions || (blueprint.openQuestions as ProductPlan['openQuestions']),
+      recommendations: localPlan?.recommendations || (blueprint.recommendations as ProductPlan['recommendations']),
+      nextActions: localPlan?.nextActions || (blueprint.nextActions as ProductPlan['nextActions']),
+      budget: localPlan?.budget || (blueprint.budget as ProductPlan['budget']),
+      aiAssistance: localPlan?.aiAssistance || (blueprint.aiAssistance as ProductPlan['aiAssistance']),
+      vision: {
+        purpose: (rawVision.purpose as string) || localPlan?.vision?.purpose || '',
+        valueProposition: (rawVision.valueProposition as string) || localPlan?.vision?.valueProposition || '',
+        targetOutcome: (rawVision.targetOutcome as string) || localPlan?.vision?.targetOutcome || '',
+        ...(resolvedWorkspaceName ? { workspaceName: resolvedWorkspaceName } : {}),
+      },
+      personas: (planRow.personas as unknown as ProductPlan['personas']) || localPlan?.personas || [],
+      mvp: (planRow.mvp as unknown as ProductPlan['mvp']) || localPlan?.mvp || { mustHave: [], exclusions: [] },
+      features: (planRow.features as unknown as ProductPlan['features']) || localPlan?.features || [],
+      userStories: (planRowRecord.user_stories as ProductPlan['userStories']) || localPlan?.userStories || [],
+      acceptanceCriteria: (planRowRecord.acceptance_criteria as ProductPlan['acceptanceCriteria']) || localPlan?.acceptanceCriteria || [],
+      roadmap: (planRow.roadmap as unknown as ProductPlan['roadmap']) || localPlan?.roadmap || [],
       developmentTasks: tasks,
-      requirements: (planRowRecord.requirements as ProductPlan['requirements']) || {
+      requirements: (planRowRecord.requirements as ProductPlan['requirements']) || localPlan?.requirements || {
         functional: [],
         nonFunctional: [],
       },
-      research: (planRowRecord.research as ProductPlan['research']) || {
+      research: (planRowRecord.research as ProductPlan['research']) || localPlan?.research || {
         marketAnalysis: '',
         competitiveBenchmarks: [],
         userInsights: [],
       },
     };
+
+    if (!isRealPlan(fullPlan)) {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem(`codatron_plan_${projectId}`);
+        } catch { }
+      }
+      return { plan: null, tasks: [], error: null };
+    }
 
     return { plan: fullPlan, tasks, error: null };
   } catch (err) {
@@ -102,22 +200,91 @@ export async function saveProductPlanToDb(
   plan: ProductPlan
 ): Promise<{ success: boolean; error: Error | null }> {
   try {
+    // Preserve existing workspaceName if not explicitly passed
+    let workspaceName = plan.vision?.workspaceName?.trim();
+    if (workspaceName && workspaceName.toLowerCase() === 'netflix') {
+      workspaceName = undefined;
+    }
+
+    if (!workspaceName && typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(`codatron_product_name_${projectId}`);
+        if (cached && cached.trim().toLowerCase() !== 'netflix') {
+          workspaceName = cached.trim();
+        }
+      } catch { }
+    }
+
+    if (!workspaceName) {
+      const { data: existingRow } = await supabase
+        .from('product_plans')
+        .select('vision')
+        .eq('project_id', projectId)
+        .maybeSingle();
+
+      const existingVision = existingRow?.vision as { workspaceName?: string } | undefined;
+      if (existingVision?.workspaceName && typeof existingVision.workspaceName === 'string') {
+        const trimmed = existingVision.workspaceName.trim();
+        if (trimmed.toLowerCase() !== 'netflix') {
+          workspaceName = trimmed;
+        }
+      }
+    }
+
+    const planToSave: ProductPlan = {
+      ...plan,
+      vision: {
+        ...plan.vision,
+        ...(workspaceName ? { workspaceName } : {}),
+      },
+    };
+
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(`codatron_plan_${projectId}`, JSON.stringify(plan));
-      } catch {}
+        localStorage.setItem(`codatron_plan_${projectId}`, JSON.stringify(planToSave));
+        if (workspaceName) {
+          localStorage.setItem(`codatron_product_name_${projectId}`, workspaceName);
+        }
+      } catch { }
     }
+
+    const visionPayload = {
+      purpose: planToSave.vision.purpose,
+      valueProposition: planToSave.vision.valueProposition,
+      targetOutcome: planToSave.vision.targetOutcome,
+      ...(workspaceName ? { workspaceName } : {}),
+      __blueprint: {
+        originalIdea: planToSave.originalIdea,
+        analysis: planToSave.analysis,
+        snapshot: planToSave.snapshot,
+        userJourneys: planToSave.userJourneys,
+        technicalArchitecture: planToSave.technicalArchitecture,
+        recommendedStack: planToSave.recommendedStack,
+        systemComponents: planToSave.systemComponents,
+        teamRequirement: planToSave.teamRequirement,
+        timeline: planToSave.timeline,
+        demoArchitecture: planToSave.demoArchitecture,
+        dataModel: planToSave.dataModel,
+        risks: planToSave.risks,
+        assumptions: planToSave.assumptions,
+        openQuestions: planToSave.openQuestions,
+        recommendations: planToSave.recommendations,
+        nextActions: planToSave.nextActions,
+        budget: planToSave.budget,
+        aiAssistance: planToSave.aiAssistance,
+      },
+    };
 
     const { data: savedPlan, error: planErr } = await supabase
       .from('product_plans')
       .upsert(
         {
           project_id: projectId,
-          vision: plan.vision as unknown as Json,
-          personas: plan.personas as unknown as Json,
-          mvp: plan.mvp as unknown as Json,
-          features: plan.features as unknown as Json,
-          roadmap: plan.roadmap as unknown as Json,
+          vision: visionPayload as unknown as Json,
+          personas: planToSave.personas as unknown as Json,
+          mvp: planToSave.mvp as unknown as Json,
+          features: planToSave.features as unknown as Json,
+          roadmap: planToSave.roadmap as unknown as Json,
         },
         { onConflict: 'project_id' }
       )
@@ -150,7 +317,7 @@ export async function saveProductPlanToDb(
     }
 
     return { success: true, error: null };
-  } catch (err) {
+  } catch {
     return { success: true, error: null };
   }
 }
@@ -189,7 +356,7 @@ export async function recordAgentRunInDb(
   } catch (err) {
     return { id: null, error: err instanceof Error ? err : new Error(String(err)) };
   }
-}export async function updateTaskStatusInDb(
+} export async function updateTaskStatusInDb(
   supabase: SupabaseClient<Database>,
   taskId: string,
   status: 'todo' | 'in-progress' | 'completed' | 'blocked'

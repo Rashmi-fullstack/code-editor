@@ -110,10 +110,13 @@ export function WorkspaceHeader({
   const [nameInput, setNameInput] = useState('');
   const [relativeSavedText, setRelativeSavedText] = useState<string>(() => getRelativeText(lastSavedAt));
 
-  const displayName = workspaceName ?? project?.name ?? 'Untitled Project';
+  const isProduct = workspace === 'product';
+  const displayName = isProduct
+    ? (workspaceName || 'Untitled Product Plan')
+    : (workspaceName ?? project?.name ?? 'Untitled Project');
 
   const handleStartRename = () => {
-    setNameInput(displayName);
+    setNameInput(displayName === 'Untitled Product Plan' || displayName === 'Untitled Project' ? '' : displayName);
     setIsEditingName(true);
   };
 
@@ -210,6 +213,15 @@ export function WorkspaceHeader({
           </span>
         </Link>
 
+        {workspace === 'product' && (
+          <Badge
+            variant="outline"
+            className="hidden sm:inline-flex border-white/15 bg-white/[0.04] text-[10px] text-slate-300 font-semibold px-2 py-0.5 rounded-full"
+          >
+            Product Workspace
+          </Badge>
+        )}
+
         <ChevronRight className="h-3 w-3 text-slate-600 hidden sm:block" />
 
         {/* Project Name (Editable) */}
@@ -283,16 +295,21 @@ export function WorkspaceHeader({
           )}
 
           {/* Persistent Save Status Indicator */}
-          <div className="hidden xl:flex items-center pl-2">
+          <div className="hidden sm:flex items-center pl-2">
             {indicatorStatus === 'saving' ? (
               <span className="flex items-center gap-1.5 text-[11px] text-amber-300 font-medium">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                <span>{indicatorText}</span>
+                <span>Saving...</span>
               </span>
             ) : indicatorStatus === 'unsaved' ? (
               <span className="flex items-center gap-1.5 text-[11px] text-amber-400 font-medium">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-                <span>{indicatorText}</span>
+                <span>Unsaved changes</span>
+              </span>
+            ) : indicatorStatus as string === 'failed' || indicatorStatus as string === 'error' ? (
+              <span className="flex items-center gap-1.5 text-[11px] text-rose-400 font-medium">
+                <span className="text-[10px] font-bold">✕</span>
+                <span>Save failed</span>
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
@@ -317,12 +334,12 @@ export function WorkspaceHeader({
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="hidden 2xl:flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/5 transition"
+          className="hidden md:flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/10 transition"
         >
           <Command className="h-3.5 w-3.5 text-slate-400" />
           <span>Commands</span>
-          <kbd className="rounded border border-white/10 bg-white/5 px-1 text-[10px] font-mono text-slate-400">
-            Ctrl+K
+          <kbd className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] font-mono text-slate-400">
+            ⌘K
           </kbd>
         </button>
       </div>
@@ -399,22 +416,22 @@ export function WorkspaceHeader({
           <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
         )}
 
-        {/* Export ZIP */}
+        {/* Export ZIP / Export Plan */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              disabled={!hasFiles}
+              disabled={workspace === 'developer' && !hasFiles}
               onClick={() => void onExportZip()}
               className="h-8 px-3 rounded-full border border-white/10 bg-white/[0.03] hover:bg-white/10 text-xs text-slate-300 hover:text-white gap-1.5 hidden md:flex disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Export</span>
+              <span className="hidden lg:inline">{workspace === 'product' ? 'Export Plan' : 'Export'}</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
-            {hasFiles ? 'Download full project as ZIP' : 'No files to export'}
+            {workspace === 'product' ? 'Export Product Plan & Project' : hasFiles ? 'Download full project as ZIP' : 'No files to export'}
           </TooltipContent>
         </Tooltip>
 
@@ -435,7 +452,7 @@ export function WorkspaceHeader({
               ) : (
                 <Save className="h-3.5 w-3.5" />
               )}
-              <span className="hidden sm:inline">Save Product</span>
+              <span className="hidden sm:inline">Save Plan</span>
               <kbd className="hidden lg:inline text-[9px] font-mono opacity-60">⌘S</kbd>
             </Button>
           ) : !hasActiveFile ? (
@@ -500,7 +517,7 @@ export function WorkspaceHeader({
                 >
                   <div className="flex items-center gap-2">
                     <Save className="h-3.5 w-3.5 text-white" />
-                    <span>Save Product</span>
+                    <span>Save Plan</span>
                   </div>
                   <kbd className="text-[10px] text-slate-400 font-mono">⌘S</kbd>
                 </DropdownMenuItem>

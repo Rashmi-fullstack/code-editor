@@ -4,7 +4,7 @@ import { promisify } from "util";
 
 const scrypt = promisify(scryptCallback);
 const cookieName = "ai_studio_session";
-const secret = process.env.AUTH_SECRET || (process.env.NODE_ENV === "production" ? (() => { throw new Error("AUTH_SECRET environment variable is required in production"); })() : "development-only-secret-change-before-deploying");
+const secret = process.env.AUTH_SECRET?.trim() || (process.env.NODE_ENV === "production" ? (() => { throw new Error("AUTH_SECRET environment variable is required in production"); })() : "development-only-secret-change-before-deploying");
 
 export type SessionUser = { id: string; name: string; email: string };
 

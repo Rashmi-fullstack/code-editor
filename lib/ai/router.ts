@@ -119,20 +119,43 @@ export async function resolveAIConfig(
     );
   }
 
-  // Product Manager: Strictly uses Google Gemini
+  // Product Manager: Uses Google Gemini (or platform fallback)
   const platformGeminiKey = process.env.GEMINI_API_KEY?.trim();
   if (platformGeminiKey) {
+    const rawModel = process.env.GEMINI_MODEL?.trim() || 'gemini-flash-latest';
+    const cleanModel =
+      !rawModel ||
+      rawModel === 'gemini-1.5-flash' ||
+      rawModel === 'gemini-1.5-pro' ||
+      rawModel === 'gemini-2.5-flash' ||
+      rawModel === 'gemini-2.5-flash-lite' ||
+      rawModel === 'gemini-3.6-flash' ||
+      rawModel.includes('Qwen') ||
+      !rawModel.startsWith('gemini-')
+        ? 'gemini-flash-latest'
+        : rawModel;
     return {
       provider: geminiProvider,
       providerId: 'google-gemini',
-      model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+      model: cleanModel,
       apiKey: platformGeminiKey,
       keySource: 'platform',
     };
   }
 
+  const hfToken = process.env.HF_TOKEN?.trim();
+  if (hfToken) {
+    return {
+      provider: huggingfaceProvider,
+      providerId: DEVELOPER_IDE_CONFIG.provider,
+      model: process.env.HF_MODEL?.trim() || DEVELOPER_IDE_CONFIG.model,
+      apiKey: hfToken,
+      keySource: 'platform',
+    };
+  }
+
   throw new Error(
-    'No Gemini API key is configured. Please configure your Gemini API Key in Profile or set GEMINI_API_KEY in the server environment.'
+    'No AI provider API key is configured. Please configure your API Key in Profile or set GEMINI_API_KEY in the server environment.'
   );
 }
 

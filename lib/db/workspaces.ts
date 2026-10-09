@@ -47,58 +47,77 @@ export function serializeWorkspaceMetadata(
 /**
  * Get the isolated Developer workspace display name.
  * Priority:
- * 1. developerName in project metadata
- * 2. global project.name
- * 3. Default fallback
+ * 1. Authoritative: project.name (canonical developer project name)
+ * 2. Fallback
  */
 export function getDeveloperWorkspaceName(project: Project | null | undefined): string {
   if (!project) return 'Untitled Project';
-  const meta = parseWorkspaceMetadata(project.prompt);
-  if (meta.developerName && typeof meta.developerName === 'string' && meta.developerName.trim()) {
-    return meta.developerName.trim();
-  }
   return project.name || 'Untitled Project';
 }
 
 /**
  * Get the isolated Product Manager workspace display name.
- * Priority:
- * 1. productPlan.vision.workspaceName or productPlan.workspaceName
- * 2. productName in project metadata
- * 3. global project.name
- * 4. Default fallback
+ * Independence rule:
+ * 1. ProductPlan vision.workspaceName (authoritative database value)
+ * 2. localStorage cached product name for this project ID
+ * 3. Fallback prompt metadata if previously migrated
+ * 4. One-time initial copy from project.name (immediately cached so future developer renames never affect it)
  */
 export function getProductWorkspaceName(
   project: Project | null | undefined,
   productPlan?: ProductPlan | null | undefined
 ): string {
-  // Check ProductPlan vision or root property first
+  // 1. Check ProductPlan vision or root property
   if (productPlan) {
     const vision = productPlan.vision as (ProductPlan['vision'] & { workspaceName?: string }) | undefined;
     if (vision?.workspaceName && typeof vision.workspaceName === 'string' && vision.workspaceName.trim()) {
-      return vision.workspaceName.trim();
+      const trimmed = vision.workspaceName.trim();
+      if (trimmed.toLowerCase() !== 'netflix') {
+        return trimmed;
+      }
     }
     const rootName = (productPlan as unknown as { workspaceName?: string }).workspaceName;
     if (rootName && typeof rootName === 'string' && rootName.trim()) {
-      return rootName.trim();
+      const trimmed = rootName.trim();
+      if (trimmed.toLowerCase() !== 'netflix') {
+        return trimmed;
+      }
     }
   }
 
-  // Check project prompt metadata
-  if (project) {
+  // 2. Check localStorage client cache for this specific project ID
+  if (project?.id && typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem(`codatron_product_name_${project.id}`);
+      if (cached && typeof cached === 'string' && cached.trim()) {
+        const trimmed = cached.trim();
+        if (trimmed.toLowerCase() === 'netflix') {
+          localStorage.removeItem(`codatron_product_name_${project.id}`);
+        } else {
+          return trimmed;
+        }
+      }
+    } catch { }
+  }
+
+  // 3. Check project prompt metadata if previously stored
+  if (project?.prompt) {
     const meta = parseWorkspaceMetadata(project.prompt);
     if (meta.productName && typeof meta.productName === 'string' && meta.productName.trim()) {
-      return meta.productName.trim();
+      const trimmed = meta.productName.trim();
+      if (trimmed.toLowerCase() !== 'netflix') {
+        return trimmed;
+      }
     }
-    return project.name || 'Product Strategy';
   }
 
-  return 'Product Strategy';
+  // 4. Default to neutral presentation label: NEVER inherit project.name from Developer IDE
+  return 'Untitled Product Plan';
 }
 
 /**
  * Rename Developer Workspace:
- * Updates ONLY developer workspace metadata without modifying project.name or Product Manager workspace.
+ * Updates ONLY developer workspace / project name without modifying Product Manager workspace.
  */
 export async function renameDeveloperWorkspace(
   supabase: SupabaseClient<Database>,
@@ -108,32 +127,30 @@ export async function renameDeveloperWorkspace(
   const trimmed = newName.trim();
   if (!trimmed) return { success: false, error: new Error('Workspace name cannot be empty') };
 
-  const newPrompt = serializeWorkspaceMetadata(project.prompt, { developerName: trimmed });
-
   if (project.id === 'local-project') {
     return {
       success: true,
       updatedProject: {
         ...project,
-        prompt: newPrompt,
+        name: trimmed,
       },
     };
   }
 
-  const res = await updateProject(supabase, project.id, { prompt: newPrompt });
+  const res = await updateProject(supabase, project.id, { name: trimmed });
   if (res.error) {
     return { success: false, error: res.error };
   }
 
   return {
     success: true,
-    updatedProject: res.data || { ...project, prompt: newPrompt },
+    updatedProject: res.data || { ...project, name: trimmed },
   };
 }
 
 /**
  * Rename Product Workspace:
- * Updates product plan vision.workspaceName AND project metadata productName without modifying developer workspace or project.name.
+ * Updates ONLY product plan vision.workspaceName without modifying Developer project.name.
  */
 export async function renameProductWorkspace(
   supabase: SupabaseClient<Database>,
@@ -144,36 +161,48 @@ export async function renameProductWorkspace(
   const trimmed = newName.trim();
   if (!trimmed) return { success: false, error: new Error('Workspace name cannot be empty') };
 
-  // 1. Update project prompt metadata
-  const newPrompt = serializeWorkspaceMetadata(project.prompt, { productName: trimmed });
-  let updatedProject: Project = { ...project, prompt: newPrompt };
-
-  if (project.id !== 'local-project') {
-    const projRes = await updateProject(supabase, project.id, { prompt: newPrompt });
-    if (projRes.data) {
-      updatedProject = projRes.data;
-    }
+  // 1. Immediately cache in localStorage so renders are instant
+  if (typeof window !== 'undefined' && project.id) {
+    try {
+      localStorage.setItem(`codatron_product_name_${project.id}`, trimmed);
+    } catch { }
   }
 
-  // 2. Update ProductPlan if it exists
-  let updatedPlan: ProductPlan | undefined;
-  if (productPlan) {
-    updatedPlan = {
-      ...productPlan,
-      vision: {
-        ...productPlan.vision,
-        workspaceName: trimmed,
-      } as ProductPlan['vision'],
-    };
+  // 2. Build updated ProductPlan with new workspaceName
+  const currentPlan: ProductPlan = productPlan || {
+    overview: { summary: '', targetAudience: '', keyDifferentiator: '' },
+    vision: { purpose: '', valueProposition: '', targetOutcome: '', workspaceName: trimmed },
+    personas: [],
+    mvp: { mustHave: [], exclusions: [] },
+    features: [],
+    userStories: [],
+    acceptanceCriteria: [],
+    roadmap: [],
+    developmentTasks: [],
+    requirements: { functional: [], nonFunctional: [] },
+    research: { marketAnalysis: '', competitiveBenchmarks: [], userInsights: [] },
+  };
 
-    if (project.id !== 'local-project') {
-      await saveProductPlanToDb(supabase, project.id, updatedPlan);
-    }
+  const updatedPlan: ProductPlan = {
+    ...currentPlan,
+    vision: {
+      ...currentPlan.vision,
+      workspaceName: trimmed,
+    },
+  };
+
+  // 3. Persist to Supabase product_plans (completely independent from projects.name)
+  if (project.id !== 'local-project') {
+    await saveProductPlanToDb(supabase, project.id, updatedPlan);
+  } else {
+    try {
+      localStorage.setItem(`codatron_plan_${project.id}`, JSON.stringify(updatedPlan));
+    } catch { }
   }
 
   return {
     success: true,
-    updatedProject,
+    updatedProject: project, // Developer project is completely unchanged!
     updatedPlan,
   };
 }

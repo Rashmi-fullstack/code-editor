@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/server';
+import { createClient, createPrivilegedClient } from '@/lib/server';
+import { getCurrentUser } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { GeminiUnavailableError } from '@/lib/ai/coding-agent';
-import { runProductManagerAgent } from '@/lib/ai/product-planner';
+import { runProductManagerAgent, ProductPlannerError } from '@/lib/ai/product-planner';
 import { resolveAIConfig, trackAiUsage } from '@/lib/ai/router';
 import { reserveCredit, finalizeCredit } from '@/lib/credits/manager';
 
@@ -23,11 +24,14 @@ export async function POST(
       );
     }
 
-    // 1. Strict Server-Side Authentication
+    // 1. Strict Server-Side Authentication (Supabase Auth + Session Cookie)
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
 
     if (!user) {
       return NextResponse.json(
@@ -36,8 +40,11 @@ export async function POST(
       );
     }
 
+    const privileged = createPrivilegedClient();
+    const dbClient = privileged || supabase;
+
     // Check canonical account status and role from database
-    const { data: userProfile } = await supabase
+    const { data: userProfile } = await dbClient
       .from('profiles')
       .select('status, role')
       .eq('id', user.id)
@@ -53,24 +60,19 @@ export async function POST(
     const isAdmin = userProfile?.role === 'admin';
 
     // 2. Strict Project Ownership Verification
-    const { data: project, error: projError } = await supabase
+    const { data: project } = await dbClient
       .from('projects')
       .select('id, name, user_id')
       .eq('id', projectId)
       .maybeSingle();
 
-    if (projError || !project) {
-      return NextResponse.json(
-        { message: 'Project not found or access denied.' },
-        { status: 404 }
-      );
-    }
-
-    if (project.user_id !== user.id && !isAdmin) {
-      return NextResponse.json(
-        { message: 'Project access denied.' },
-        { status: 403 }
-      );
+    if (project) {
+      if (project.user_id !== user.id && !isAdmin) {
+        return NextResponse.json(
+          { message: 'Project access denied.' },
+          { status: 403 }
+        );
+      }
     }
 
     // Rate Limit check
@@ -87,7 +89,7 @@ export async function POST(
     // 3. Server-Side Atomic Credit Reservation (Standard change cost = 10 credits)
     const cost = 10;
     if (!isAdmin) {
-      const creditReservation = await reserveCredit(supabase, user.id, cost);
+      const creditReservation = await reserveCredit(dbClient, user.id, cost);
       if (!creditReservation.success) {
         return NextResponse.json(
           {
@@ -104,7 +106,7 @@ export async function POST(
       }
     }
 
-    const { data: files } = await supabase
+    const { data: files } = await dbClient
       .from('project_files')
       .select('path')
       .eq('project_id', projectId);
@@ -112,7 +114,7 @@ export async function POST(
     const existingPaths = (files ?? []).map((f) => f.path);
 
     const startTime = Date.now();
-    const aiConfig = await resolveAIConfig(supabase, user.id);
+    const aiConfig = await resolveAIConfig(dbClient, user.id, 'product');
     let tokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let isCreditFinalized = false;
 
@@ -127,12 +129,12 @@ export async function POST(
 
       // 5. Finalize Credit on Success
       if (!isAdmin) {
-        await finalizeCredit(supabase, user.id, true, cost);
+        await finalizeCredit(dbClient, user.id, true, cost);
         isCreditFinalized = true;
       }
 
       // 6. Record Real Token Usage with Credit Flag
-      await trackAiUsage(supabase, {
+      await trackAiUsage(dbClient, {
         userId: user.id,
         projectId,
         config: aiConfig,
@@ -148,7 +150,7 @@ export async function POST(
       // Persist plan and tasks to Supabase
       try {
         const { saveProductPlanToDb } = await import('@/lib/db/product');
-        await saveProductPlanToDb(supabase, projectId, plan);
+        await saveProductPlanToDb(dbClient, projectId, plan);
       } catch (dbErr) {
         console.warn('Could not persist product plan to DB:', dbErr);
       }
@@ -163,16 +165,42 @@ export async function POST(
     } catch (operationError) {
       // 7. On Failure: Release Reserved Credit
       if (!isAdmin && !isCreditFinalized) {
-        await finalizeCredit(supabase, user.id, false, cost);
+        await finalizeCredit(dbClient, user.id, false, cost);
         isCreditFinalized = true;
       }
       throw operationError;
     }
   } catch (error) {
     console.error('[Plan Route Error]:', error);
-    const status = error instanceof GeminiUnavailableError ? error.status : 500;
+    let status = 500;
+    let code = 'FAILED';
+    let provider: string | undefined = undefined;
+
+    if (error instanceof GeminiUnavailableError) {
+      status = error.status;
+      code = error.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_UNAVAILABLE';
+      provider = 'google-gemini';
+    } else if (error instanceof ProductPlannerError) {
+      status = error.status;
+      code = error.code;
+      provider = error.provider;
+    } else if (
+      error instanceof Error &&
+      (error.message.includes('429') ||
+        error.message.toLowerCase().includes('rate limit') ||
+        error.message.toLowerCase().includes('quota'))
+    ) {
+      status = 429;
+      code = 'RATE_LIMITED';
+    }
+
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Product planning failed.' },
+      {
+        message: error instanceof Error ? error.message : 'Product planning failed.',
+        code,
+        status,
+        provider,
+      },
       { status }
     );
   }

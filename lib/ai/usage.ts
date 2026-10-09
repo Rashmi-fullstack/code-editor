@@ -57,9 +57,23 @@ export async function recordTokenUsage(
   record: TokenUsageRecord
 ): Promise<void> {
   try {
-    const { error } = await supabase.from('ai_token_usage').insert({
+    let targetProjectId: string | null = null;
+    if (record.projectId) {
+      // Validate project exists before attaching to avoid foreign key violation
+      const { data: project } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('id', record.projectId)
+        .maybeSingle();
+
+      if (project?.id) {
+        targetProjectId = project.id;
+      }
+    }
+
+    const payload = {
       user_id: record.userId,
-      project_id: record.projectId || null,
+      project_id: targetProjectId,
       provider: record.provider,
       model: record.model,
       operation: record.operation,
@@ -76,10 +90,23 @@ export async function recordTokenUsage(
       success: record.success,
       credit_used: typeof record.creditUsed === 'number' ? record.creditUsed : (record.success ? 1 : 0),
       latency_ms: record.latencyMs || null,
-    });
+    };
+
+    const { error } = await supabase.from('ai_token_usage').insert(payload);
 
     if (error) {
-      console.warn('[AI Usage] Could not persist usage record:', error.message);
+      // If foreign key constraint failed (e.g., project was deleted or unsaved), retry with null project_id
+      if (error.code === '23503' && payload.project_id) {
+        const { error: retryError } = await supabase.from('ai_token_usage').insert({
+          ...payload,
+          project_id: null,
+        });
+        if (retryError) {
+          console.warn('[AI Usage] Could not persist usage record on retry:', retryError.message);
+        }
+      } else {
+        console.warn('[AI Usage] Could not persist usage record:', error.message);
+      }
     }
   } catch (err) {
     console.warn('[AI Usage] Exception persisting token usage:', err);

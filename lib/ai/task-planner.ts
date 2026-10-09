@@ -1,3 +1,4 @@
+
 import { DEFAULT_GEMINI_MODEL, GeminiUnavailableError } from './coding-agent';
 import type { DevelopmentTask } from './product-planner';
 import type { ProjectFile } from '@/lib/types/database';
@@ -27,7 +28,18 @@ export async function planTechnicalTask(
 ): Promise<TechnicalImplementationPlan> {
   const key = options?.aiConfig?.apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
   if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env or add your personal API key in Profile.');
-  const model = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const rawModel = options?.aiConfig?.model?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const model =
+    !rawModel ||
+      rawModel === 'gemini-1.5-flash' ||
+      rawModel === 'gemini-1.5-pro' ||
+      rawModel === 'gemini-2.5-flash' ||
+      rawModel === 'gemini-2.5-flash-lite' ||
+      rawModel === 'gemini-3.6-flash' ||
+      rawModel.includes('Qwen') ||
+      !rawModel.startsWith('gemini-')
+      ? 'gemini-flash-latest'
+      : rawModel;
 
   const fileTree = existingFiles.map((f) => f.path);
   const affected = task.affectedFiles || [];
@@ -69,65 +81,94 @@ Return ONLY JSON matching this schema:
     },
   });
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const body = JSON.stringify({
-    systemInstruction: { parts: [{ text: system }] },
-    contents: [{ role: 'user', parts: [{ text: userContent }] }],
-    generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-  });
+  const candidateModels = [
+    model,
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-flash-latest',
+  ].filter((m, idx, self) => Boolean(m) && self.indexOf(m) === idx);
 
-  let response: Response | undefined;
-  let failure = '';
+  let rawText = '';
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': key,
-      },
-      body,
+  for (const candidateModel of candidateModels) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${candidateModel}:generateContent`;
+    const body = JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: 'user', parts: [{ text: userContent }] }],
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
     });
-    if (response.ok) break;
-    failure = (await response.text()).slice(0, 500);
-    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
-    const delay = 800 * 2 ** attempt + Math.floor(Math.random() * 200);
-    await new Promise<void>((resolve) => setTimeout(resolve, delay));
-  }
 
-  if (!response?.ok) {
-    if (response && [429, 500, 502, 503, 504].includes(response.status)) {
-      throw new GeminiUnavailableError(
-        failure ? `Gemini Architect is temporarily busy: ${failure}` : 'Gemini Architect is temporarily busy. Please retry.'
-      );
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': key,
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        console.warn(`[Task Planner] Model "${candidateModel}" returned HTTP ${response.status}. Trying next model...`);
+        continue;
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: {
+          candidatesTokenCount?: number;
+          promptTokenCount?: number;
+          totalTokenCount?: number;
+        };
+      };
+
+      if (options?.onUsage && payload.usageMetadata) {
+        const inputTokens = payload.usageMetadata.promptTokenCount ?? 0;
+        const outputTokens = payload.usageMetadata.candidatesTokenCount ?? 0;
+        const totalTokens = payload.usageMetadata.totalTokenCount ?? (inputTokens + outputTokens);
+        options.onUsage({ inputTokens, outputTokens, totalTokens });
+      }
+
+      const candidateText = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+      if (candidateText) {
+        rawText = candidateText;
+        break;
+      }
+    } catch (err) {
+      console.warn(`[Task Planner] Model "${candidateModel}" error:`, err);
     }
-    // Fallback if Gemini fails
-    return {
-      architectureOverview: `Implementation plan for ${task.title}`,
-      filesToCreate: task.affectedFiles.filter((p) => !fileTree.includes(p)),
-      filesToUpdate: task.affectedFiles.filter((p) => fileTree.includes(p)),
-      technicalSteps: task.acceptanceCriteria,
-      codingAgentPrompt: `Build feature: ${task.title}\n\nDescription: ${task.description}\n\nAffected files: ${task.affectedFiles.join(', ')}\n\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}`,
-    };
   }
 
-  const payload = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    usageMetadata?: {
-      candidatesTokenCount?: number;
-      promptTokenCount?: number;
-      totalTokenCount?: number;
-    };
-  };
-
-  if (options?.onUsage && payload.usageMetadata) {
-    const inputTokens = payload.usageMetadata.promptTokenCount ?? 0;
-    const outputTokens = payload.usageMetadata.candidatesTokenCount ?? 0;
-    const totalTokens = payload.usageMetadata.totalTokenCount ?? (inputTokens + outputTokens);
-    options.onUsage({ inputTokens, outputTokens, totalTokens });
+  // If Gemini models all failed, attempt transfer to Hugging Face
+  if (!rawText) {
+    const hfToken = process.env.HF_TOKEN?.trim();
+    if (hfToken) {
+      try {
+        console.log('[Task Planner] Transferring to Hugging Face API...');
+        const { HfInference } = await import('@huggingface/inference');
+        const hf = new HfInference(hfToken);
+        const hfRes = await hf.chatCompletion({
+          model: 'Qwen/Qwen3-Coder-480B-A35B-Instruct',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userContent },
+          ],
+          temperature: 0.2,
+          max_tokens: 4096,
+        });
+        rawText = hfRes.choices?.[0]?.message?.content?.trim() || '';
+      } catch (hfErr) {
+        console.warn('[Task Planner] Hugging Face transfer failed:', hfErr);
+      }
+    }
   }
 
-  const text = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+  let text = rawText;
+  if (text.startsWith('```')) {
+    const match = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+    text = match ? match[1].trim() : text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
 
   try {
     const parsed = JSON.parse(text) as TechnicalImplementationPlan;

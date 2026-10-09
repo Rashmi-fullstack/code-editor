@@ -89,33 +89,33 @@ function CheckoutContent() {
     plans.find((p) => p.id === planIdParam) ||
     (planIdParam === 'premium' || planIdParam === 'business'
       ? {
-          id: 'premium',
-          name: 'Team Premium',
-          price_inr: 999,
-          credits: 1200,
-          billing_interval: 'month',
-          description: 'High throughput for engineering teams shipping multi-page applications.',
-          features: [
-            '1,200 Codatron AI credits / month',
-            'Multi-seat collaboration & shared workspaces',
-            'Deep multi-file refactoring & automatic repair loops',
-            'Dedicated engineering support & custom models',
-          ],
-        }
+        id: 'premium',
+        name: 'Team Premium',
+        price_inr: 999,
+        credits: 1200,
+        billing_interval: 'month',
+        description: 'High throughput for engineering teams shipping multi-page applications.',
+        features: [
+          '1,200 Codatron AI credits / month',
+          'Multi-seat collaboration & shared workspaces',
+          'Deep multi-file refactoring & automatic repair loops',
+          'Dedicated engineering support & custom models',
+        ],
+      }
       : {
-          id: 'pro',
-          name: 'Developer Pro',
-          price_inr: 499,
-          credits: 500,
-          billing_interval: 'month',
-          description: 'For active builders creating production-ready web applications.',
-          features: [
-            '500 Codatron AI credits / month',
-            'Up to 50 AI generation & refactoring operations',
-            'High-priority generation queues & low latency',
-            'Autonomous Product Manager planning & roadmaps',
-          ],
-        });
+        id: 'pro',
+        name: 'Developer Pro',
+        price_inr: 499,
+        credits: 500,
+        billing_interval: 'month',
+        description: 'For active builders creating production-ready web applications.',
+        features: [
+          '500 Codatron AI credits / month',
+          'Up to 50 AI generation & refactoring operations',
+          'High-priority generation queues & low latency',
+          'Autonomous Product Manager planning & roadmaps',
+        ],
+      });
 
   const originalPrice = selectedPlan.price_inr;
   const discountAmount = appliedCoupon ? appliedCoupon.discountAmount : 0;

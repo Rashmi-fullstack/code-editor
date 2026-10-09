@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/server';
+import { createClient, createPrivilegedClient } from '@/lib/server';
+import { getCurrentUser } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { GeminiUnavailableError } from '@/lib/ai/coding-agent';
 import { planTechnicalTask } from '@/lib/ai/task-planner';
@@ -28,11 +29,14 @@ export async function POST(
       );
     }
 
-    // 1. Strict Server-Side Authentication
+    // 1. Strict Server-Side Authentication (Supabase Auth + Session Cookie)
     const supabase = await createClient();
     const {
-      data: { user },
+      data: { user: sbUser },
     } = await supabase.auth.getUser();
+
+    const sessionUser = await getCurrentUser();
+    const user = sbUser || sessionUser;
 
     if (!user) {
       return NextResponse.json(
@@ -41,18 +45,36 @@ export async function POST(
       );
     }
 
+    const privileged = createPrivilegedClient();
+    const dbClient = privileged || supabase;
+
+    // Check canonical account status and role from database
+    const { data: userProfile } = await dbClient
+      .from('profiles')
+      .select('status, role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (userProfile?.status === 'suspended') {
+      return NextResponse.json(
+        { message: 'Your account has been suspended. Please contact administrator.' },
+        { status: 403 }
+      );
+    }
+
+    const isAdmin = userProfile?.role === 'admin';
+
     // 2. Strict Project Ownership Verification
-    const { data: project, error: projError } = await supabase
+    const { data: project } = await dbClient
       .from('projects')
       .select('id, name, user_id')
       .eq('id', projectId)
-      .eq('user_id', user.id)
       .maybeSingle();
 
-    if (projError || !project) {
+    if (project && project.user_id !== user.id && !isAdmin) {
       return NextResponse.json(
-        { message: 'Project not found or access denied.' },
-        { status: 404 }
+        { message: 'Project access denied.' },
+        { status: 403 }
       );
     }
 
@@ -66,7 +88,7 @@ export async function POST(
     }
 
     // 3. Server-Side Atomic Credit Reservation
-    const creditReservation = await reserveCredit(supabase, user.id);
+    const creditReservation = await reserveCredit(dbClient, user.id);
     if (!creditReservation.success) {
       return NextResponse.json(
         {
@@ -79,7 +101,7 @@ export async function POST(
     }
 
     let projectFiles: ProjectFile[] = body.files ?? [];
-    const { data: dbFiles } = await supabase
+    const { data: dbFiles } = await dbClient
       .from('project_files')
       .select('*')
       .eq('project_id', projectId);
@@ -89,7 +111,7 @@ export async function POST(
     }
 
     const startTime = Date.now();
-    const aiConfig = await resolveAIConfig(supabase, user.id);
+    const aiConfig = await resolveAIConfig(dbClient, user.id);
     let tokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let isCreditFinalized = false;
 
@@ -103,11 +125,11 @@ export async function POST(
       });
 
       // 5. Finalize Credit on Success
-      await finalizeCredit(supabase, user.id, true);
+      await finalizeCredit(dbClient, user.id, true);
       isCreditFinalized = true;
 
       // 6. Record Real Token Usage
-      await trackAiUsage(supabase, {
+      await trackAiUsage(dbClient, {
         userId: user.id,
         projectId,
         config: aiConfig,
@@ -128,7 +150,7 @@ export async function POST(
     } catch (operationError) {
       // 7. On Failure: Release Reserved Credit
       if (!isCreditFinalized) {
-        await finalizeCredit(supabase, user.id, false);
+        await finalizeCredit(dbClient, user.id, false);
         isCreditFinalized = true;
       }
       throw operationError;

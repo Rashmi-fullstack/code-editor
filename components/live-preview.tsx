@@ -248,8 +248,8 @@ export default function LivePreview({
             <div className="grid grid-cols-1 gap-2">
               {[
                 {
-                  title: '🎬 Netflix Clone',
-                  prompt: 'Build a Netflix clone with dark theme, hero banner, movie rows, search and responsive design.',
+                  title: '🎬 Streaming Media App',
+                  prompt: 'Build a streaming media web app with dark theme, hero banner, movie rows, search and responsive design.',
                 },
                 {
                   title: '📊 SaaS Analytics Dashboard',

@@ -256,31 +256,23 @@ export async function createProjectWithMode(
       return { data: null, error: createErr };
     }
 
-    // If starting in Product Manager mode, initialize an empty product plan record
-    if (input.mode === 'product') {
-      try {
-        await supabase.from('product_plans').insert({
-          project_id: project.id,
-          vision: { purpose: '', valueProposition: '', targetOutcome: '' },
-          personas: [],
-          mvp: { mustHave: [], exclusions: [] },
-          features: [],
-          roadmap: [],
-        });
-      } catch (pmInitErr) {
-        console.warn('Note: product_plans initial record creation:', pmInitErr);
-      }
-      try {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(`codatron_plan_${project.id}`, JSON.stringify({
-            vision: { purpose: '', valueProposition: '', targetOutcome: '' },
-            personas: [],
-            mvp: { mustHave: [], exclusions: [] },
-            features: [],
-            roadmap: [],
-          }));
-        }
-      } catch { }
+    // Initialize product workspace record
+    try {
+      const pmVision =
+        input.mode === 'product' && input.name
+          ? { purpose: '', valueProposition: '', targetOutcome: '', workspaceName: input.name.trim() }
+          : { purpose: '', valueProposition: '', targetOutcome: '' };
+
+      await supabase.from('product_plans').insert({
+        project_id: project.id,
+        vision: pmVision,
+        personas: [],
+        mvp: { mustHave: [], exclusions: [] },
+        features: [],
+        roadmap: [],
+      });
+    } catch (pmInitErr) {
+      console.warn('Note: product_plans initial record creation:', pmInitErr);
     }
 
     return { data: project, error: null };

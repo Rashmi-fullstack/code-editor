@@ -12,7 +12,7 @@ export const DEVELOPER_IDE_CONFIG = {
   model: 'Qwen/Qwen3-Coder-480B-A35B-Instruct',
   displayName: 'Qwen3-Coder • Hugging Face',
   fallbackProvider: 'google-gemini',
-  fallbackModel: (process.env.GEMINI_MODEL?.trim() && process.env.GEMINI_MODEL.trim() !== 'gemini-3.6-flash') ? process.env.GEMINI_MODEL.trim() : 'gemini-2.5-flash',
+  fallbackModel: (process.env.GEMINI_MODEL?.trim() && !['gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-3.6-flash'].includes(process.env.GEMINI_MODEL.trim())) ? process.env.GEMINI_MODEL.trim() : 'gemini-flash-latest',
   fallbackDisplayName: 'Gemini • Fallback',
 } as const;
 

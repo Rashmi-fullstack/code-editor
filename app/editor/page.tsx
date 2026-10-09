@@ -59,7 +59,7 @@ import {
   renameProductWorkspace,
   isValidUuid,
 } from '@/lib/db';
-import { getProductPlanFromDb, saveProductPlanToDb } from '@/lib/db/product';
+import { getProductPlanFromDb, saveProductPlanToDb, isRealPlan } from '@/lib/db/product';
 import { exportProjectToZip } from '@/lib/export/zip';
 import { ProductWorkspace } from '@/components/product/product-workspace';
 import { NewProjectModal } from '@/components/projects/new-project-modal';
@@ -258,7 +258,7 @@ function EditorPageContent() {
   }, [drafts, savedContents, files]);
 
   const isCurrentFileDirty = Boolean(activePath && dirtyPaths.has(activePath));
-  const isProductDirty = false;
+  const [isProductDirty, setIsProductDirty] = useState(false);
   const saveState: 'saved' | 'saving' | 'unsaved' = isSaving
     ? 'saving'
     : isCurrentFileDirty
@@ -332,15 +332,35 @@ function EditorPageContent() {
 
   const handlePlanGenerated = useCallback(
     (plan: ProductPlan) => {
-      setProductPlan(plan);
+      // Determine the authoritative Product Manager workspace name to preserve
+      const currentPmName =
+        productPlan?.vision?.workspaceName ||
+        (project?.id && typeof window !== 'undefined'
+          ? localStorage.getItem(`codatron_product_name_${project.id}`)
+          : null) ||
+        project?.name ||
+        'Product Strategy';
+
+      const planWithPreservedName: ProductPlan = {
+        ...plan,
+        vision: {
+          ...plan.vision,
+          workspaceName: currentPmName,
+        },
+      };
+
+      setProductPlan(planWithPreservedName);
+      setIsProductDirty(false);
+      setLastSavedAt(new Date());
       if (project) {
-        void saveProductPlanToDb(supabase, project.id, plan);
+        void saveProductPlanToDb(supabase, project.id, planWithPreservedName);
         try {
-          localStorage.setItem(`codatron_plan_${project.id}`, JSON.stringify(plan));
+          localStorage.setItem(`codatron_plan_${project.id}`, JSON.stringify(planWithPreservedName));
+          localStorage.setItem(`codatron_product_name_${project.id}`, currentPmName);
         } catch { }
       }
     },
-    [project, supabase]
+    [project, supabase, productPlan]
   );
 
   const handleFilesUpdatedFromPM = useCallback(
@@ -585,7 +605,14 @@ function EditorPageContent() {
 
         try {
           const savedPlan = localStorage.getItem(`codatron_plan_${localPid}`);
-          if (savedPlan) setProductPlan(JSON.parse(savedPlan));
+          if (savedPlan) {
+            const parsed = JSON.parse(savedPlan);
+            if (isRealPlan(parsed)) {
+              setProductPlan(parsed);
+            } else {
+              localStorage.removeItem(`codatron_plan_${localPid}`);
+            }
+          }
         } catch { }
 
         try {
@@ -698,6 +725,7 @@ function EditorPageContent() {
         }
 
         setProject(current);
+        setProductPlan(null);
         hydratedTargetRef.current = `${user ? user.id : 'anon'}_${current.id}`;
         try {
           localStorage.setItem(`codatron_project_${current.id}`, JSON.stringify(current));
@@ -741,8 +769,8 @@ function EditorPageContent() {
         // Non-blocking background loads for ancillary data
         void Promise.allSettled([
           getProductPlanFromDb(supabase, current.id).then((planRes) => {
-            if (active && currentSeq === loadSeqRef.current && planRes.plan) {
-              setProductPlan(planRes.plan);
+            if (active && currentSeq === loadSeqRef.current) {
+              setProductPlan(planRes.plan || null);
             }
           }),
           supabase
@@ -1001,7 +1029,7 @@ function EditorPageContent() {
         }
       }
 
-      if (productPlan && project.id !== 'local-project') {
+      if (productPlan && project.id !== 'local-project' && (isProductDirty || workspace === 'product')) {
         await saveProductPlanToDb(supabase, project.id, productPlan);
       }
 
@@ -1012,6 +1040,7 @@ function EditorPageContent() {
       }
 
       setLastSavedAt(new Date());
+      setIsProductDirty(false);
       if (workspace === 'product') {
         toast.success('Product saved successfully!');
       } else {
@@ -1025,7 +1054,7 @@ function EditorPageContent() {
     } finally {
       setIsSaving(false);
     }
-  }, [project, dirtyPaths, files, drafts, persistFilesToCache, productPlan, supabase, workspace]);
+  }, [project, dirtyPaths, files, drafts, persistFilesToCache, productPlan, supabase, workspace, isProductDirty]);
 
   // Save active file to Supabase & hot-sync to WebContainer virtual filesystem
   const save = useCallback(async (): Promise<boolean> => {
@@ -1973,6 +2002,9 @@ function EditorPageContent() {
             files={files}
             productPlan={productPlan}
             workspaceName={productWorkspaceName}
+            isDirty={isProductDirty}
+            onDirtyChange={setIsProductDirty}
+            lastSavedAt={lastSavedAt}
             onPlanGenerated={handlePlanGenerated}
             onFilesUpdated={handleFilesUpdatedFromPM}
             onSwitchToDeveloper={handleSwitchToDeveloper}

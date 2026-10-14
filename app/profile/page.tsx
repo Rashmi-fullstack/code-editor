@@ -7,14 +7,8 @@ import {
   Sparkles,
   Mail,
   Calendar,
-  Key,
-  Cpu,
   Shield,
-  ShieldCheck,
-  Eye,
-  EyeOff,
   Trash2,
-  Save,
   ArrowLeft,
   Loader2,
   Zap,
@@ -25,25 +19,14 @@ import {
   Coins,
   CheckCircle2,
   CreditCard,
-  Tag,
   Activity,
-  Users,
-  BarChart3,
-  ExternalLink,
-  ChevronRight,
+  Server,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -57,17 +40,8 @@ import { useAuth } from '@/components/auth-provider';
 import { useCredits } from '@/components/credit-provider';
 import { WorkspaceSwitcher } from '@/components/layout/workspace-switcher';
 import { GlobalUserMenu } from '@/components/layout/global-user-menu';
-import { DEVELOPER_IDE_CONFIG } from '@/lib/ai/developer-ide-config';
+import { AdminProviderConfig } from '@/components/admin/admin-provider-config';
 import type { UserUsageSummary } from '@/lib/ai/usage';
-
-interface AiConfigState {
-  provider: string;
-  model: string;
-  keyConfigured: boolean;
-  maskedKey: string | null;
-  keySource: 'platform' | 'byok';
-  updatedAt: string | null;
-}
 
 interface ProfileAccountData {
   createdAt: string | null;
@@ -81,7 +55,7 @@ export default function ProfilePage() {
     creditsRemaining,
     creditLimit,
     creditsUsed,
-    isAdmin: contextIsAdmin,
+    currentPlan,
     refreshCredits,
   } = useCredits();
 
@@ -90,21 +64,12 @@ export default function ProfilePage() {
   const effectiveIsAdmin = serverIsAdmin === true;
 
   // Profile data states
-  const [aiConfig, setAiConfig] = useState<AiConfigState | null>(null);
   const [usage, setUsage] = useState<UserUsageSummary | null>(null);
   const [accountData, setAccountData] = useState<ProfileAccountData>({
     createdAt: null,
     status: 'Active Account',
   });
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // Key form states
-  const [inputApiKey, setInputApiKey] = useState('');
-  const [showKeyText, setShowKeyText] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState('google-gemini');
-  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
-  const [isSavingKey, setIsSavingKey] = useState(false);
-  const [isDeletingKey, setIsDeletingKey] = useState(false);
 
   // Danger Zone / Account Deletion state
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -121,8 +86,7 @@ export default function ProfilePage() {
 
     const fetchData = async () => {
       try {
-        const [configRes, usageRes, creditsRes, adminRes] = await Promise.all([
-          fetch('/api/profile/ai-config', { cache: 'no-store' }),
+        const [usageRes, creditsRes, adminRes] = await Promise.all([
           fetch('/api/profile/usage', { cache: 'no-store' }),
           fetch('/api/profile/credits', { cache: 'no-store' }),
           fetch('/api/admin/me', { cache: 'no-store' }).catch(() => null),
@@ -134,15 +98,6 @@ export default function ProfilePage() {
           const adminData = await adminRes.json();
           if (!ignore) {
             setServerIsAdmin(Boolean(adminData?.isAdmin));
-          }
-        }
-
-        if (configRes.ok) {
-          const configJson = (await configRes.json()) as AiConfigState;
-          if (!ignore) {
-            setAiConfig(configJson);
-            setSelectedProvider(configJson.provider || 'google-gemini');
-            setSelectedModel(configJson.model || 'gemini-2.5-flash');
           }
         }
 
@@ -183,61 +138,6 @@ export default function ProfilePage() {
       ignore = true;
     };
   }, [authLoading, user, router, refreshKey, refreshCredits, serverIsAdmin]);
-
-  const handleSaveApiKey = async () => {
-    if (!inputApiKey.trim()) {
-      toast.error('Please enter an API key.');
-      return;
-    }
-
-    setIsSavingKey(true);
-    try {
-      const res = await fetch('/api/profile/ai-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          apiKey: inputApiKey.trim(),
-          provider: selectedProvider,
-          model: selectedModel,
-        }),
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.message || 'Failed to save API key');
-      }
-
-      toast.success('API key saved and encrypted successfully!');
-      setInputApiKey('');
-      setShowKeyText(false);
-      setRefreshKey((k) => k + 1);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save API key');
-    } finally {
-      setIsSavingKey(false);
-    }
-  };
-
-  const handleRemoveApiKey = async () => {
-    setIsDeletingKey(true);
-    try {
-      const res = await fetch('/api/profile/ai-config', {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.message || 'Failed to remove API key');
-      }
-
-      toast.success('Personal API key removed. Reverted to Platform Key.');
-      setRefreshKey((k) => k + 1);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to remove API key');
-    } finally {
-      setIsDeletingKey(false);
-    }
-  };
 
   const handleExecuteAccountDeletion = async () => {
     if (deleteConfirmationText.trim() !== 'DELETE') {
@@ -295,6 +195,13 @@ export default function ProfilePage() {
     Math.max(0, Math.round((creditsRemaining / Math.max(1, creditLimit)) * 100))
   );
 
+  const getPlanBadgeLabel = () => {
+    if (effectiveIsAdmin) return 'Administrator Unlimited';
+    if (currentPlan === 'pro') return 'Developer Pro';
+    if (currentPlan === 'premium' || currentPlan === 'business') return 'Team Premium';
+    return 'Free Tier';
+  };
+
   return (
     <div className="relative min-h-screen w-full flex flex-col bg-black text-white selection:bg-white/20 select-none overflow-x-hidden">
       {/* Background ambient atmosphere */}
@@ -325,7 +232,9 @@ export default function ProfilePage() {
           </Link>
 
           <span className="text-white/30">/</span>
-          <span className="text-xs font-semibold text-slate-300">Profile & AI Settings</span>
+          <span className="text-xs font-semibold text-slate-300">
+            {effectiveIsAdmin ? 'Administrator Profile' : 'AI Usage & Plan'}
+          </span>
         </div>
 
         <div className="flex items-center gap-3">
@@ -340,7 +249,7 @@ export default function ProfilePage() {
             </div>
           ) : (
             <Link
-              href="#credits"
+              href="#usage-plan"
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/12 bg-[#28282a] text-xs font-medium text-slate-300 hover:text-white hover:border-white/20 transition cursor-pointer"
               title="Remaining Application Credits"
             >
@@ -377,7 +286,7 @@ export default function ProfilePage() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2.5 flex-wrap">
                     <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                      {effectiveIsAdmin ? 'Administrator' : user?.name || 'Local Developer'}
+                      {effectiveIsAdmin ? 'Administrator' : user?.name || 'Developer'}
                     </h1>
                     <Badge
                       variant="outline"
@@ -403,7 +312,7 @@ export default function ProfilePage() {
                   </p>
                   <p className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
                     <Mail className="h-3 w-3 text-slate-500" />
-                    <span>{user?.email || 'admin@codatron.ai'}</span>
+                    <span>{user?.email || 'user@codatron.ai'}</span>
                   </p>
                   <p className="flex items-center gap-1.5 text-[11px] text-slate-500 pt-0.5">
                     <Calendar className="h-3 w-3 text-slate-600" />
@@ -418,7 +327,7 @@ export default function ProfilePage() {
                   <Link href="/admin">
                     <Button
                       size="sm"
-                      className="rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs px-4 py-2 gap-1.5 shadow-lg shadow-emerald-500/20 transition"
+                      className="rounded-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs px-4 py-2 gap-1.5 shadow-lg shadow-emerald-500/20 transition cursor-pointer"
                     >
                       <Shield className="h-3.5 w-3.5 text-black" />
                       <span>Open Admin Portal</span>
@@ -428,7 +337,7 @@ export default function ProfilePage() {
                 <Link href="/editor?view=developer">
                   <Button
                     size="sm"
-                    className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-4 py-2 gap-1.5 shadow-sm transition"
+                    className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-4 py-2 gap-1.5 shadow-sm transition cursor-pointer"
                   >
                     <Code2 className="h-3.5 w-3.5" />
                     <span>Open IDE</span>
@@ -438,7 +347,7 @@ export default function ProfilePage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs font-medium px-4 py-2 gap-1.5 transition"
+                    className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs font-medium px-4 py-2 gap-1.5 transition cursor-pointer"
                   >
                     <Compass className="h-3.5 w-3.5 text-purple-400" />
                     <span>Product Manager</span>
@@ -450,7 +359,7 @@ export default function ProfilePage() {
         </section>
 
         {/* ======================================================================= */}
-        {/* SECTION 2: AI CREDITS & USAGE (ADMIN VS NORMAL USER) */}
+        {/* SECTION 2: AI CREDITS & USAGE / AI USAGE & PLAN */}
         {/* ======================================================================= */}
         {effectiveIsAdmin ? (
           /* ===================================================================== */
@@ -460,345 +369,131 @@ export default function ProfilePage() {
             <div className="flex items-center justify-between border-b border-white/12 pb-3">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                  <Coins className="h-4 w-4 text-amber-400" />
-                  <span>Codatron AI Allowance & Provider Tracking</span>
+                  <Zap className="h-4 w-4 text-amber-400" />
+                  <span>Platform AI Administration</span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Application credits are unlimited for Administrator. External AI provider consumption is tracked separately below.
+                  Platform administrator accounts have unlimited execution capacity and manage infrastructure routing.
                 </p>
               </div>
-              <Badge
-                variant="outline"
-                className="rounded-full border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs px-3 py-1 font-bold"
-              >
-                ∞ Unlimited Credits
-              </Badge>
-            </div>
-
-            {/* Allowance & Providers Split Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Card 1: Codatron AI Allowance */}
-              <Card className="rounded-[24px] border border-amber-500/20 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500/30 to-transparent pointer-events-none" />
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-amber-400/90 uppercase tracking-wider">
-                      Codatron AI Allowance
-                    </span>
-                    <Badge className="border-amber-500/30 bg-amber-500/20 text-amber-300 text-[10px] px-2 py-0">
-                      Unrestricted
-                    </Badge>
-                  </div>
-                  <div className="flex items-baseline gap-2 pt-1">
-                    <span className="text-3xl font-extrabold text-white tracking-tight">
-                      ∞ Unlimited
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-300 leading-relaxed pt-1">
-                    Application credit restriction is <strong>Disabled for Administrator</strong>. Autonomous multi-file synthesis and repair execute without quota limits.
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between">
-                  <span>Application Credit Restriction:</span>
-                  <span className="text-emerald-400 font-semibold font-mono">Bypassed</span>
-                </div>
-              </Card>
-
-              {/* Card 2: Google Gemini Consumption */}
-              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                      Google Gemini Usage
-                    </span>
-                    <Badge variant="outline" className="border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px]">
-                      External API
-                    </Badge>
-                  </div>
-                  <div className="flex items-baseline gap-2 pt-1">
-                    <span className="text-3xl font-extrabold text-white tracking-tight">
-                      {formatNumber(usage?.totalTokens)}
-                    </span>
-                    <span className="text-xs text-slate-400">tokens used</span>
-                  </div>
-                  <p className="text-xs text-slate-400 leading-relaxed pt-1">
-                    Direct token throughput to Google Gemini models. Upstream API rate limits and Google Cloud quotas apply.
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between font-mono">
-                  <span>Requests: {usage?.totalRequests ?? 0}</span>
-                  <span className="text-indigo-400">Tokens: {formatNumber(usage?.totalTokens)}</span>
-                </div>
-              </Card>
-
-              {/* Card 3: Hugging Face Fallback / Provider */}
-              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                      Hugging Face Provider
-                    </span>
-                    <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-300 text-[10px]">
-                      Inference API
-                    </Badge>
-                  </div>
-                  <div className="flex items-baseline gap-2 pt-1">
-                    <span className="text-3xl font-extrabold text-white tracking-tight">
-                      Operational
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 leading-relaxed pt-1">
-                    Hugging Face inference endpoints with automatic fallback routing. Telemetry logged to Admin Diagnostics.
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400 flex items-center justify-between font-mono">
-                  <span>Status: Connected</span>
-                  <span className="text-purple-400">Telemetry Active</span>
-                </div>
-              </Card>
-            </div>
-
-            {/* =================================================================== */}
-            {/* ADMINISTRATOR CONTROL CENTER HUB (STEP 3 REQUIREMENT)               */}
-            {/* =================================================================== */}
-            <div className="space-y-4 pt-4">
-              <div className="flex items-center justify-between border-b border-white/12 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <ShieldCheck className="h-5 w-5 text-emerald-400" />
-                    <span>Administrator Control Center</span>
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Codatron Platform Administration — select a control module to manage the platform.
-                  </p>
-                </div>
-                <Link href="/admin">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-xl border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs gap-1.5"
-                  >
-                    <span>Full Portal</span>
-                    <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
+              <div className="flex items-center gap-2">
+                <Link href="/admin/providers">
+                  <Button size="sm" className="h-7 px-3 text-xs font-semibold rounded-full bg-emerald-600 hover:bg-emerald-500 text-white gap-1 transition">
+                    <Server className="h-3 w-3" />
+                    <span>AI Providers</span>
                   </Button>
                 </Link>
+                <Badge
+                  variant="outline"
+                  className="rounded-full border-amber-500/40 bg-amber-500/15 text-amber-300 text-xs px-3 py-1 font-mono flex items-center gap-1.5"
+                >
+                  <Zap className="h-3.5 w-3.5 text-amber-400" />
+                  <span>∞ Unlimited Application Credits</span>
+                </Badge>
               </div>
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. ADMIN OVERVIEW */}
-                <Link href="/admin" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-emerald-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                          <Activity className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-emerald-300 transition">
-                        ADMIN OVERVIEW
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Platform status, key metrics, and operational health.
-                      </p>
-                    </div>
-                    <span className="text-xs text-emerald-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Launch Overview →
-                    </span>
-                  </Card>
-                </Link>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-3 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Infrastructure Status
+                  </span>
+                  <Badge className="bg-emerald-500/10 text-emerald-300 border-emerald-500/30 text-[10px]">
+                    Operational
+                  </Badge>
+                </div>
+                <div className="text-xl font-bold text-white">Centralized AI Router</div>
+                <p className="text-xs text-slate-400">
+                  Platform routing and automated provider failover are managed in the Admin Portal.
+                </p>
+                <div className="pt-2">
+                  <Link href="/admin/providers" className="text-xs text-emerald-400 hover:underline flex items-center gap-1 font-medium">
+                    <span>Manage Providers in Admin Portal</span>
+                    <span>&rarr;</span>
+                  </Link>
+                </div>
+              </Card>
 
-                {/* 2. AI PROVIDERS */}
-                <Link href="/admin/providers" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-purple-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-                          <Cpu className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-purple-300 transition">
-                        AI PROVIDERS
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Provider configuration, Gemini & Hugging Face health.
-                      </p>
-                    </div>
-                    <span className="text-xs text-purple-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Configure Providers →
-                    </span>
-                  </Card>
-                </Link>
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-3 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Platform Telemetry
+                  </span>
+                  <Activity className="h-4 w-4 text-indigo-400" />
+                </div>
+                <div className="text-xl font-bold text-white">System Diagnostics</div>
+                <p className="text-xs text-slate-400">
+                  Inspect latency, error categories, and model health metrics across all tenant operations.
+                </p>
+                <div className="pt-2">
+                  <Link href="/admin/system-health" className="text-xs text-indigo-400 hover:underline flex items-center gap-1 font-medium">
+                    <span>View System Health</span>
+                    <span>&rarr;</span>
+                  </Link>
+                </div>
+              </Card>
 
-                {/* 3. PLANS & BILLING */}
-                <Link href="/admin/plans" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-indigo-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                          <CreditCard className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-indigo-300 transition">
-                        PLANS & BILLING
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Plans, pricing in INR, and billing configuration.
-                      </p>
-                    </div>
-                    <span className="text-xs text-indigo-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Manage Plans →
-                    </span>
-                  </Card>
-                </Link>
+              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-3 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Plan Management
+                  </span>
+                  <CreditCard className="h-4 w-4 text-purple-400" />
+                </div>
+                <div className="text-xl font-bold text-white">Pricing & Credits</div>
+                <p className="text-xs text-slate-400">
+                  Configure subscription tiers, credit allowances, and coupon promotions.
+                </p>
+                <div className="pt-2">
+                  <Link href="/admin/plans" className="text-xs text-purple-400 hover:underline flex items-center gap-1 font-medium">
+                    <span>Manage Plans & Quotas</span>
+                    <span>&rarr;</span>
+                  </Link>
+                </div>
+              </Card>
+            </div>
 
-                {/* 4. COUPONS */}
-                <Link href="/admin/coupons" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-amber-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                          <Tag className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-amber-300 transition">
-                        COUPONS
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Promotional coupon codes and discount management.
-                      </p>
-                    </div>
-                    <span className="text-xs text-amber-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Manage Coupons →
-                    </span>
-                  </Card>
-                </Link>
-
-                {/* 5. USAGE & LIMITS */}
-                <Link href="/admin/ai-usage" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-blue-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                          <BarChart3 className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-blue-300 transition">
-                        USAGE & LIMITS
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Platform-wide generation usage and provider metrics.
-                      </p>
-                    </div>
-                    <span className="text-xs text-blue-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      View Usage →
-                    </span>
-                  </Card>
-                </Link>
-
-                {/* 6. USER MANAGEMENT */}
-                <Link href="/admin/users" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-emerald-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                          <Users className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-emerald-300 transition">
-                        USER MANAGEMENT
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Users, accounts, credits and activity control.
-                      </p>
-                    </div>
-                    <span className="text-xs text-emerald-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Manage Users →
-                    </span>
-                  </Card>
-                </Link>
-
-                {/* 7. ERRORS & DIAGNOSTICS */}
-                <Link href="/admin/errors" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-red-500/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
-                          <AlertTriangle className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-red-300 transition">
-                        ERRORS & DIAGNOSTICS
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Application, provider errors and correlation IDs.
-                      </p>
-                    </div>
-                    <span className="text-xs text-red-400 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Inspect Diagnostics →
-                    </span>
-                  </Card>
-                </Link>
-
-                {/* 8. SECURITY */}
-                <Link href="/admin/settings" className="group">
-                  <Card className="rounded-2xl border border-white/10 bg-[#121215] p-5 h-full flex flex-col justify-between hover:border-zinc-400/30 hover:bg-[#16161a] transition cursor-pointer">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="h-9 w-9 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white">
-                          <ShieldCheck className="h-4 w-4" />
-                        </div>
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">Module</span>
-                      </div>
-                      <h4 className="font-bold text-sm text-white group-hover:text-white transition">
-                        SECURITY & SETTINGS
-                      </h4>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Admin settings, maintenance mode, and audit logs.
-                      </p>
-                    </div>
-                    <span className="text-xs text-zinc-300 font-medium pt-3 flex items-center gap-1 group-hover:translate-x-0.5 transition">
-                      Admin Settings →
-                    </span>
-                  </Card>
-                </Link>
-              </div>
+            {/* ======================================================================= */}
+            {/* SECTION: AI PROVIDER & BYOK (ADMINISTRATOR ONLY) */}
+            {/* ======================================================================= */}
+            <div id="ai-config" className="scroll-mt-20">
+              <AdminProviderConfig onConfigUpdated={refreshCredits} />
             </div>
           </section>
         ) : (
           /* ===================================================================== */
-          /* NORMAL USER CREDIT ALLOWANCE & PROGRESS BAR PRESENTATION              */
+          /* NORMAL USER: AI USAGE & PLAN DASHBOARD                               */
           /* ===================================================================== */
-          <section id="credits" className="space-y-4">
-            <div className="flex items-center justify-between border-b border-white/12 pb-3">
+          <section id="usage-plan" className="space-y-6 scroll-mt-20">
+            {/* Heading and Action */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/12 pb-3">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                  <Coins className="h-4 w-4 text-amber-400" />
-                  <span>AI Credits & Usage</span>
+                  <Sparkles className="h-4 w-4 text-purple-400" />
+                  <span>Your AI Workspace</span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Application-level allowance for autonomous code generation, planning, and debugging.
+                  Use Codatron AI to build, edit, and improve your projects with unified platform intelligence.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full border border-white/10 bg-white/[0.04] text-xs">
+                  <span className="text-slate-400">Current Plan:</span>
+                  <span className="font-semibold text-white capitalize">{getPlanBadgeLabel()}</span>
+                </div>
+
                 <Link href="/upgrade">
                   <Button
                     size="sm"
-                    className="h-7 px-3 text-xs font-semibold rounded-full bg-indigo-600 hover:bg-indigo-500 text-white gap-1 transition"
+                    className="h-7 px-3 text-xs font-semibold rounded-full bg-white text-black hover:bg-slate-200 transition gap-1.5 cursor-pointer"
                   >
-                    <Sparkles className="h-3 w-3" />
-                    <span>View Plans</span>
+                    <CreditCard className="h-3 w-3" />
+                    <span>Upgrade Plan</span>
                   </Button>
                 </Link>
+
                 <Badge
                   variant="outline"
                   className={
@@ -823,27 +518,27 @@ export default function ProfilePage() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    Codatron AI Allowance
+                    Codatron AI Credits
                   </span>
                   <div className="flex items-baseline gap-2 pt-1">
                     <span className="text-3xl font-extrabold text-white tracking-tight">
                       {creditsRemaining} / {creditLimit}
                     </span>
                     <span className="text-xs text-slate-400 font-medium">
-                      {creditsRemaining} {creditsRemaining === 1 ? 'credit' : 'credits'} remaining
+                      remaining
                     </span>
                   </div>
                 </div>
 
                 <div className="text-left sm:text-right">
-                  <span className="text-xs text-slate-400">Total Consumed:</span>
+                  <span className="text-xs text-slate-400">Credits Consumed:</span>
                   <span className="ml-1.5 text-xs font-bold text-white">
                     {creditsUsed} {creditsUsed === 1 ? 'credit' : 'credits'}
                   </span>
                 </div>
               </div>
 
-              {/* Custom Visual Progress Bar */}
+              {/* Progress Bar */}
               <div className="space-y-1.5">
                 <div className="w-full bg-white/5 border border-white/10 rounded-full h-3 overflow-hidden p-0.5 shadow-inner">
                   <div
@@ -868,31 +563,29 @@ export default function ProfilePage() {
                   <div className="flex items-start gap-2.5">
                     <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
                     <p className="text-xs text-red-200 leading-relaxed">
-                      <strong>No AI credits remaining.</strong> You have used your Codatron AI credits. Upgrade to continue building with AI.
+                      <strong>AI credit limit reached.</strong> Upgrade your plan to continue building with AI.
                     </p>
                   </div>
                   <Link href="/upgrade">
                     <Button size="sm" className="rounded-full bg-white text-black hover:bg-slate-200 text-xs font-semibold px-3 py-1 shrink-0">
-                      Upgrade
+                      Upgrade Plan
                     </Button>
                   </Link>
                 </div>
               )}
             </Card>
 
-            {/* Provider Tokens Stat Cards Grid */}
+            {/* Generation Usage Cards Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
               <Card className="rounded-2xl border border-white/12 bg-black/40 backdrop-blur-xl p-5 space-y-1 shadow-lg">
                 <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                  Total Requests
+                  Total Operations
                 </span>
                 <div className="text-2xl font-bold text-white tracking-tight">
                   {usage?.totalRequests.toLocaleString() ?? 0}
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-slate-400 pt-1">
-                  <span>Platform: {usage?.platformRequests ?? 0}</span>
-                  <span>•</span>
-                  <span className="text-indigo-400">BYOK: {usage?.byokRequests ?? 0}</span>
+                <div className="text-[10px] text-slate-400 pt-1">
+                  Autonomous build & edit requests
                 </div>
               </Card>
 
@@ -904,7 +597,7 @@ export default function ProfilePage() {
                   {formatNumber(usage?.totalTokens)}
                 </div>
                 <div className="text-[10px] text-slate-400 pt-1">
-                  Actual Gemini provider usage
+                  Unified AI intelligence tokens
                 </div>
               </Card>
 
@@ -984,339 +677,7 @@ export default function ProfilePage() {
         )}
 
         {/* ======================================================================= */}
-        {/* SECTION 3: AI PROVIDER & BYOK */}
-        {/* ======================================================================= */}
-        <section id="ai-config" className="space-y-4">
-          <div className="flex items-center justify-between border-b border-white/12 pb-3">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-purple-400" />
-                <span>AI Provider & BYOK</span>
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Bring Your Own Key (BYOK) for personal Gemini quotas or use the default Platform Key.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-medium">Source:</span>
-              <Badge
-                className={`rounded-full text-[10px] font-semibold px-3 py-0.5 border ${aiConfig?.keySource === 'byok'
-                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                  : 'bg-white/10 text-white border-white/15'
-                  }`}
-              >
-                {aiConfig?.keySource === 'byok' ? 'Personal Key (BYOK)' : 'Codatron Platform Key'}
-              </Badge>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left: Active Configuration Card */}
-            <div className="lg:col-span-1 space-y-4">
-              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-4 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-white">Current AI Stack</h3>
-                  <p className="text-xs text-slate-400">
-                    Active engine powering autonomous generation & planning.
-                  </p>
-                </div>
-
-                <div className="space-y-3 pt-2 text-xs">
-                  <div className="flex justify-between items-center py-2 border-b border-white/5">
-                    <span className="text-slate-400">Provider</span>
-                    <span className="font-semibold text-slate-200">
-                      {aiConfig?.provider === 'huggingface'
-                        ? 'Hugging Face (Inference Providers)'
-                        : 'Google Gemini'}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center py-2 border-b border-white/5">
-                    <span className="text-slate-400">Model</span>
-                    <span className="font-mono text-purple-300">
-                      {aiConfig?.model || DEVELOPER_IDE_CONFIG.model}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center py-2 border-b border-white/5">
-                    <span className="text-slate-400">Key Source</span>
-                    <span className="font-medium text-slate-200">
-                      {aiConfig?.keySource === 'byok' ? 'Personal API Key' : 'Platform Shared Key'}
-                    </span>
-                  </div>
-
-                  {aiConfig?.keyConfigured && aiConfig.maskedKey && (
-                    <div className="flex justify-between items-center py-2 border-b border-white/5">
-                      <span className="text-slate-400">Stored Key</span>
-                      <span className="font-mono text-slate-300 text-[11px] bg-white/[0.05] px-2.5 py-0.5 rounded-full border border-white/10">
-                        {aiConfig.maskedKey}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-3.5 flex items-start gap-2.5">
-                  <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Personal keys are encrypted with AES-256-GCM server-side. They are never sent to the browser or stored in localStorage. Note: BYOK changes provider credentials; application credit limits still apply.
-                  </p>
-                </div>
-              </Card>
-            </div>
-
-            {/* Right: Key Management Form */}
-            <div className="lg:col-span-2 space-y-4">
-              <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 space-y-5 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <Key className="h-4 w-4 text-amber-400" />
-                    <span>Configure Personal API Key</span>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Configure your personal API key or token. Your key will be validated and encrypted securely server-side.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-300">
-                      AI Provider
-                    </label>
-                    <Select
-                      value={selectedProvider}
-                      onValueChange={(val) => {
-                        setSelectedProvider(val);
-                        if (val === 'huggingface') {
-                          setSelectedModel(DEVELOPER_IDE_CONFIG.model);
-                        } else if (val === 'google-gemini') {
-                          setSelectedModel(DEVELOPER_IDE_CONFIG.fallbackModel);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="rounded-xl bg-white/[0.05] border-white/12 text-xs text-white hover:border-white/20 focus:border-white/30">
-                        <SelectValue placeholder="Select Provider" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#18181a] border-white/12 text-slate-200 text-xs rounded-xl shadow-2xl">
-                        <SelectItem value="huggingface">Hugging Face (Inference Providers)</SelectItem>
-                        <SelectItem value="google-gemini">Google Gemini</SelectItem>
-                        <SelectItem value="openai" disabled>OpenAI (Coming Soon)</SelectItem>
-                        <SelectItem value="anthropic" disabled>Anthropic (Coming Soon)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-300">
-                      Target Model
-                    </label>
-                    <Select
-                      value={selectedModel}
-                      onValueChange={setSelectedModel}
-                    >
-                      <SelectTrigger className="rounded-xl bg-white/[0.05] border-white/12 text-xs text-white hover:border-white/20 focus:border-white/30">
-                        <SelectValue placeholder="Select Model" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[#18181a] border-white/12 text-slate-200 text-xs rounded-xl shadow-2xl">
-                        {selectedProvider === 'huggingface' ? (
-                          <SelectItem value="Qwen/Qwen3-Coder-480B-A35B-Instruct">
-                            Qwen3-Coder-480B-A35B-Instruct (Primary)
-                          </SelectItem>
-                        ) : (
-                          <>
-                            <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</SelectItem>
-                            <SelectItem value="gemini-3.6-flash">Gemini 3.6 Flash</SelectItem>
-                            <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* API Key Input */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-slate-300">
-                      {selectedProvider === 'huggingface' ? 'Hugging Face Token' : 'Gemini API Key'}
-                    </label>
-                    {selectedProvider === 'huggingface' ? (
-                      <a
-                        href="https://huggingface.co/settings/tokens"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
-                      >
-                        <span>Get Hugging Face Token</span>
-                        <span>&rarr;</span>
-                      </a>
-                    ) : (
-                      <a
-                        href="https://aistudio.google.com/app/apikey"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
-                      >
-                        <span>Get Gemini API Key</span>
-                        <span>&rarr;</span>
-                      </a>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <Input
-                      type={showKeyText ? 'text' : 'password'}
-                      placeholder={
-                        aiConfig?.keyConfigured && aiConfig.maskedKey
-                          ? `Currently set: ${aiConfig.maskedKey} (Enter new key to replace)`
-                          : 'Paste your AI Studio API key (AIzaSy…)'
-                      }
-                      value={inputApiKey}
-                      onChange={(e) => setInputApiKey(e.target.value)}
-                      className="rounded-xl bg-white/[0.05] border-white/12 text-xs font-mono pr-10 text-white focus:border-white/30"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKeyText((prev) => !prev)}
-                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white transition cursor-pointer"
-                      title={showKeyText ? 'Hide API Key' : 'Show API Key'}
-                    >
-                      {showKeyText ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-white/5">
-                  <div className="flex items-center gap-2.5">
-                    <Button
-                      size="sm"
-                      onClick={() => void handleSaveApiKey()}
-                      disabled={isSavingKey || !inputApiKey.trim()}
-                      className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-5 py-2 gap-1.5 shadow-sm cursor-pointer transition"
-                    >
-                      {isSavingKey ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Save className="h-3.5 w-3.5" />
-                      )}
-                      <span>Save & Encrypt Key</span>
-                    </Button>
-
-                    {aiConfig?.keyConfigured && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleRemoveApiKey()}
-                        disabled={isDeletingKey}
-                        className="rounded-full border border-red-500/20 bg-red-500/10 hover:bg-red-500/20 text-xs text-red-400 hover:text-red-300 px-4 py-2 gap-1.5 cursor-pointer transition"
-                      >
-                        {isDeletingKey ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                        <span>Remove Key</span>
-                      </Button>
-                    )}
-                  </div>
-
-                  <span className="text-[11px] text-slate-500 font-mono">
-                    AES-256-GCM Encrypted
-                  </span>
-                </div>
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* ======================================================================= */}
-        {/* SECTION 4: WORKSPACE ACCESS */}
-        {/* ======================================================================= */}
-        <section id="workspaces" className="space-y-4">
-          <div className="border-b border-white/12 pb-3">
-            <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-              <Layers className="h-4 w-4 text-purple-400" />
-              <span>Workspace Access</span>
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Launch into your dual-mode development environments.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-full bg-white/10 text-white border border-white/15">
-                    <Code2 className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">Developer IDE</h3>
-                    <p className="text-[11px] text-slate-400">
-                      Monaco editor, live runtime preview, file manager & terminal.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="pt-4 mt-3 border-t border-white/5 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500 font-mono">Route: /editor?view=developer</span>
-                <Link href="/editor?view=developer">
-                  <Button
-                    size="sm"
-                    className="rounded-full bg-white text-black font-semibold hover:bg-slate-200 text-xs px-4 py-2 gap-1.5 shadow-sm cursor-pointer transition"
-                  >
-                    <span>Launch Developer IDE</span>
-                    <span>&rarr;</span>
-                  </Button>
-                </Link>
-              </div>
-            </Card>
-
-            <Card className="rounded-[24px] border border-white/12 bg-black/40 backdrop-blur-xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none" />
-
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-full bg-white/10 text-purple-300 border border-white/15">
-                    <Compass className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">Product Manager</h3>
-                    <p className="text-[11px] text-slate-400">
-                      High-level architectural planning, user stories & task breakdowns.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="pt-4 mt-3 border-t border-white/5 flex items-center justify-between">
-                <span className="text-[11px] text-slate-500 font-mono">Route: /editor?view=product</span>
-                <Link href="/editor?view=product">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-full border-white/12 bg-[#28282a] hover:bg-[#323236] text-white text-xs font-semibold px-4 py-2 gap-1.5 cursor-pointer transition"
-                  >
-                    <span>Launch Product Manager</span>
-                    <span>&rarr;</span>
-                  </Button>
-                </Link>
-              </div>
-            </Card>
-          </div>
-        </section>
-
-        {/* ======================================================================= */}
-        {/* SECTION 5: DANGER ZONE (ACCOUNT DELETION) */}
+        {/* DANGER ZONE (ACCOUNT DELETION) */}
         {/* ======================================================================= */}
         <section id="danger-zone" className="space-y-4 pt-4">
           <div className="border-b border-red-500/20 pb-3">
@@ -1334,7 +695,7 @@ export default function ProfilePage() {
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-white">Delete Account</h3>
                 <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
-                  Permanently delete your Codatron.ai account and all data associated with it. This action is irreversible. All your projects, files, generation history, AI usage records, provider configurations, and credentials will be removed.
+                  Permanently delete your Codatron.ai account and all data associated with it. This action is irreversible. All your projects, files, generation history, AI usage records, and workspace configurations will be removed.
                 </p>
               </div>
 
@@ -1394,7 +755,7 @@ export default function ProfilePage() {
             </p>
             <p className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
-              <span>Encrypted BYOK credentials and provider settings</span>
+              <span>Workspace configurations and preferences</span>
             </p>
           </div>
 

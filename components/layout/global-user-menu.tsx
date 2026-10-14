@@ -12,6 +12,8 @@ import {
   ExternalLink,
   Zap,
   Shield,
+  Cpu,
+  CreditCard,
 } from 'lucide-react';
 import { useAuth } from '@/components/auth-provider';
 import { useCredits } from '@/components/credit-provider';
@@ -172,18 +174,33 @@ export function GlobalUserMenu({
                 className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-slate-200 hover:text-white hover:bg-white/10 transition"
               >
                 <div className="flex items-center gap-2">
-                  <Key className="h-3.5 w-3.5 text-amber-400" />
+                  <Key className="h-3.5 w-3.5 text-purple-400" />
                   <span>AI Provider & BYOK</span>
                 </div>
-                <Badge variant="outline" className="rounded-full border-white/15 bg-white/10 text-[9px] px-2 py-0 text-white font-mono">
-                  BYOK
+                <Badge variant="outline" className="rounded-full border-purple-500/30 bg-purple-500/10 text-[9px] px-2 py-0 text-purple-300 font-mono">
+                  KEYS
                 </Badge>
               </Link>
             </DropdownMenuItem>
 
             <DropdownMenuItem asChild>
               <Link
-                href="/profile#credits"
+                href="/admin/providers"
+                className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-slate-200 hover:text-white hover:bg-white/10 transition"
+              >
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>AI Providers</span>
+                </div>
+                <Badge variant="outline" className="rounded-full border-emerald-500/30 bg-emerald-500/10 text-[9px] px-2 py-0 text-emerald-300 font-mono">
+                  CONFIG
+                </Badge>
+              </Link>
+            </DropdownMenuItem>
+
+            <DropdownMenuItem asChild>
+              <Link
+                href="/admin/plans"
                 className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-amber-300 hover:text-amber-200 hover:bg-amber-500/10 transition font-medium"
               >
                 <div className="flex items-center gap-2">
@@ -210,39 +227,12 @@ export function GlobalUserMenu({
 
             <DropdownMenuItem asChild>
               <Link
-                href="/profile#ai-config"
-                className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-slate-200 hover:text-white hover:bg-white/10 transition"
-              >
-                <div className="flex items-center gap-2">
-                  <Key className="h-3.5 w-3.5 text-amber-400" />
-                  <span>AI Provider & BYOK</span>
-                </div>
-                <Badge variant="outline" className="rounded-full border-white/15 bg-white/10 text-[9px] px-2 py-0 text-white font-mono">
-                  BYOK
-                </Badge>
-              </Link>
-            </DropdownMenuItem>
-
-            <DropdownMenuItem asChild>
-              <Link
-                href="/profile#usage"
+                href="/profile#usage-plan"
                 className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-slate-200 hover:text-white hover:bg-white/10 transition"
               >
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-                  <span>Token Usage</span>
-                </div>
-              </Link>
-            </DropdownMenuItem>
-
-            <DropdownMenuItem asChild>
-              <Link
-                href="/profile#credits"
-                className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-slate-200 hover:text-white hover:bg-white/10 transition"
-              >
-                <div className="flex items-center gap-2">
-                  <Zap className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Credits: {creditsRemaining}/{creditLimit}</span>
+                  <span>AI Usage & Plan</span>
                 </div>
                 <Badge
                   variant="outline"
@@ -259,7 +249,7 @@ export function GlobalUserMenu({
                 className="flex items-center justify-between rounded-xl px-2.5 py-2 cursor-pointer text-indigo-300 hover:text-indigo-200 hover:bg-indigo-500/10 transition font-medium"
               >
                 <div className="flex items-center gap-2">
-                  <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
+                  <CreditCard className="h-3.5 w-3.5 text-indigo-400" />
                   <span>Upgrade Plan</span>
                 </div>
                 <Badge

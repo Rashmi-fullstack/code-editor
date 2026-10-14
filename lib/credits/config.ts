@@ -62,7 +62,7 @@ export const CODATRON_PLANS: Record<string, PlanTier> = {
       'Up to 50 AI generation & refactoring operations',
       'High-priority generation queues & low latency',
       'Autonomous Product Manager planning & roadmaps',
-      'Custom BYOK personal API key integration',
+      'Full-stack autonomous AI generation & refactoring',
       'Unlimited manual editing, preview & live HMR',
     ],
   },

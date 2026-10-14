@@ -485,24 +485,7 @@ function UpgradeContent() {
           </div>
         </div>
 
-        {/* BYOK Note */}
-        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <Cpu className="h-5 w-5 text-indigo-400 shrink-0" />
-            <div className="space-y-0.5">
-              <p className="text-xs font-semibold text-white">Have your own Google Gemini or Hugging Face API key?</p>
-              <p className="text-[11px] text-slate-400">
-                You can configure your personal API key under Profile → AI Providers to build directly using personal provider quota with zero Codatron platform fees.
-              </p>
-            </div>
-          </div>
-          <Link href="/profile#ai-config">
-            <Button variant="outline" size="sm" className="rounded-full border-white/15 bg-white/5 text-xs text-white hover:bg-white/10 shrink-0 gap-1.5">
-              <span>Manage BYOK</span>
-              <ExternalLink className="h-3 w-3 opacity-60" />
-            </Button>
-          </Link>
-        </div>
+
       </main>
     </div>
   );

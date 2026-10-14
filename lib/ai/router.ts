@@ -34,37 +34,60 @@ export async function resolveAIConfig(
   userId?: string | null,
   preferredScope: 'developer' | 'product' = 'developer'
 ): Promise<ActiveAIConfig> {
-  // Check for User BYOK configuration in Supabase
-  if (supabase && userId) {
-    try {
-      const { data, error } = await supabase
+  // Check for admin-configured platform key in user_ai_keys
+  try {
+    const { createPrivilegedClient } = await import('@/lib/server');
+    const privileged = createPrivilegedClient();
+    let keyRecord: { provider: string; model: string | null; encrypted_key: string; key_hint: string | null; user_id: string } | null = null;
+    
+    if (userId) {
+      const { data } = await privileged
         .from('user_ai_keys')
         .select('*')
         .eq('user_id', userId)
         .eq('is_active', true)
         .maybeSingle();
+      keyRecord = data;
+    }
+    if (!keyRecord) {
+      const { data } = await privileged
+        .from('user_ai_keys')
+        .select('*')
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      keyRecord = data;
+    }
 
-      if (!error && data && data.encrypted_key) {
-        try {
-          const decryptedKey = decryptApiKey(data.encrypted_key);
-          const provider = PROVIDERS[data.provider] || (preferredScope === 'developer' ? huggingfaceProvider : geminiProvider);
-          const defaultModel = data.provider === 'huggingface' ? DEVELOPER_IDE_CONFIG.model : 'gemini-2.5-flash';
+    if (keyRecord && keyRecord.encrypted_key) {
+      try {
+        const decryptedKey = decryptApiKey(keyRecord.encrypted_key);
+        const providerId = keyRecord.provider || (preferredScope === 'developer' ? 'huggingface' : 'google-gemini');
+        const provider = PROVIDERS[providerId] || (preferredScope === 'developer' ? huggingfaceProvider : geminiProvider);
+        const defaultModel = providerId === 'huggingface' ? DEVELOPER_IDE_CONFIG.model : 'gemini-flash-latest';
+
+        if (
+          (preferredScope === 'product' && providerId === 'google-gemini') ||
+          (preferredScope === 'developer' && providerId === 'huggingface')
+        ) {
           return {
             provider,
-            providerId: data.provider || (preferredScope === 'developer' ? 'huggingface' : 'google-gemini'),
-            model: data.model || defaultModel,
+            providerId,
+            model: keyRecord.model || defaultModel,
             apiKey: decryptedKey,
-            keySource: 'byok',
-            maskedKey: data.key_hint || maskApiKey(decryptedKey),
+            keySource: userId === keyRecord.user_id ? 'byok' : 'platform',
+            maskedKey: keyRecord.key_hint || maskApiKey(decryptedKey),
           };
-        } catch (decryptErr) {
-          console.warn('[AI Router] Failed to decrypt user BYOK key, falling back to platform:', decryptErr);
         }
+      } catch (decryptErr) {
+        console.warn('[AI Router] Failed to decrypt configured key, falling back to environment:', decryptErr);
       }
-    } catch (err) {
-      console.warn('[AI Router] Exception reading user BYOK key:', err);
     }
+  } catch (err) {
+    // Non-blocking fallback to environment
   }
+
 
   // Developer IDE: Resolves primary provider based on Admin Settings configuration
   if (preferredScope === 'developer') {

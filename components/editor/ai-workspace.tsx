@@ -77,7 +77,6 @@ export interface AIWorkspaceProps {
   conversation: AiMessage[];
   generationStage?: string;
   onSelectGeneratedFile?: (path: string) => void;
-  keySource?: 'platform' | 'byok';
   activeTab?: 'ai' | 'files';
   onActiveTabChange?: (tab: 'ai' | 'files') => void;
   modelDisplayName?: string;

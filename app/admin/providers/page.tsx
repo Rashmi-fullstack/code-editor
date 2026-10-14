@@ -12,9 +12,11 @@ import {
   Server,
   Layers,
   Activity,
+  Key,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { AdminProviderConfig } from '@/components/admin/admin-provider-config';
 
 interface ProviderTelemetry {
   id: string;
@@ -92,14 +94,23 @@ export default function AdminProvidersPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-bold text-white flex items-center gap-2">
-          <Cpu className="h-5 w-5 text-emerald-400" />
-          AI Provider Monitoring & Rate Limits
-        </h1>
-        <p className="text-xs text-zinc-400 mt-0.5">
-          Health telemetry, latency benchmarks, external quotas, and automated fallback tracking.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <Cpu className="h-5 w-5 text-emerald-400" />
+            AI Provider Monitoring & Rate Limits
+          </h1>
+          <p className="text-xs text-zinc-400 mt-0.5">
+            Health telemetry, latency benchmarks, external quotas, and automated fallback tracking.
+          </p>
+        </div>
+        <a
+          href="#provider-config"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-medium hover:bg-emerald-500/20 transition self-start sm:self-auto cursor-pointer"
+        >
+          <Key className="h-3.5 w-3.5 text-emerald-400" />
+          <span>Configure API Keys</span>
+        </a>
       </div>
 
       {/* Provider Status Cards */}
@@ -195,6 +206,14 @@ export default function AdminProvidersPage() {
             </Card>
           );
         })}
+      </div>
+
+      {/* Platform Provider Configuration & API Keys (BYOK / Centrally Managed Keys) */}
+      <div id="provider-config" className="scroll-mt-20">
+        <AdminProviderConfig
+          title="Platform Provider Configuration & API Keys"
+          description="Centrally manage platform AI routing, provider models, and AES-256-GCM encrypted credentials. These server-side credentials power all tenant code generations."
+        />
       </div>
 
       {/* Fallback Events & Rate-Limiting Feed */}

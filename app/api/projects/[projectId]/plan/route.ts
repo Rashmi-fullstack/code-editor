@@ -194,12 +194,18 @@ export async function POST(
       code = 'RATE_LIMITED';
     }
 
+    const userMessage =
+      status === 429
+        ? "We're having trouble completing your request. Please try again shortly."
+        : status === 503
+          ? 'Codatron AI is temporarily unavailable. Please try again in a moment.'
+          : "We couldn't finish generating your product plan. Please try again.";
+
     return NextResponse.json(
       {
-        message: error instanceof Error ? error.message : 'Product planning failed.',
+        message: userMessage,
         code,
         status,
-        provider,
       },
       { status }
     );

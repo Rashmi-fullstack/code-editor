@@ -1,5 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 
 export function AuthShell({
   title,
@@ -72,26 +75,59 @@ export function Field({
   type,
   value,
   onChange,
+  placeholder,
+  autoComplete,
 }: {
   label: string;
   type: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === "password";
+  const effectiveType = isPassword ? (showPassword ? "text" : "password") : type;
+
   return (
-    <label className="block">
+    <div className="block">
       <span className="mb-1.5 block text-xs font-medium text-slate-200">
         {label}
       </span>
-      <input
-        required
-        minLength={type === "password" ? 8 : undefined}
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-sm text-white placeholder:text-slate-500 backdrop-blur-sm transition-all duration-200 outline-none focus:border-white/30 focus:ring-2 focus:ring-white/10"
-      />
-    </label>
+      <div className="relative">
+        <input
+          required
+          minLength={isPassword ? 8 : undefined}
+          type={effectiveType}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          className={`w-full rounded-xl border border-white/15 bg-white/[0.05] px-4 py-2.5 text-sm text-white placeholder:text-slate-500 backdrop-blur-sm transition-all duration-200 outline-none focus:border-white/30 focus:ring-2 focus:ring-white/10 ${
+            isPassword ? "pr-11" : ""
+          }`}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowPassword((prev) => !prev);
+            }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition cursor-pointer p-1 rounded-md focus:outline-none focus:ring-1 focus:ring-white/20"
+            tabIndex={-1}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? (
+              <EyeOff className="h-4 w-4 text-slate-300" />
+            ) : (
+              <Eye className="h-4 w-4 text-slate-300" />
+            )}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

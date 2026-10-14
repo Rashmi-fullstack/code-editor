@@ -153,7 +153,6 @@ function EditorPageContent() {
   const [conversation, setConversation] = useState<AiMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [generationStage, setGenerationStage] = useState<string | undefined>(undefined);
-  const [keySource, setKeySource] = useState<'platform' | 'byok'>('platform');
 
   // Command palette
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -819,14 +818,6 @@ function EditorPageContent() {
             .catch(() => {
               if (active) setIsChatLoading(false);
             }),
-          fetch('/api/profile/ai-config')
-            .then((res) => (res.ok ? res.json() : null))
-            .then((data) => {
-              if (active && currentSeq === loadSeqRef.current && (data?.keySource === 'byok' || data?.keyConfigured)) {
-                setKeySource('byok');
-              }
-            })
-            .catch(() => { }),
         ]);
 
         hydratedTargetRef.current = targetKey;
@@ -1548,23 +1539,33 @@ function EditorPageContent() {
         lower.includes('credit') ||
         lower.includes('insufficient_credits') ||
         lower.includes('credit limit') ||
-        lower.includes('no ai credits');
+        lower.includes('no ai credits') ||
+        lower.includes('usage limit');
 
-      let userFriendlyMsg = 'Generation could not be completed. Please try again or refine your prompt.';
+      let userFriendlyMsg = "We couldn't finish generating your changes. Your project is safe, and you can try again.";
       if (isCreditError) {
-        userFriendlyMsg = "You've used your Codatron AI credits. Upgrade your plan to continue building with AI.";
+        userFriendlyMsg = "You've reached your current AI usage limit. Upgrade your plan to continue building.";
         if (!isSilent) {
           setShowUpgradeModal(true);
         }
         void refreshCredits();
-      } else if (lower.includes('quota') || lower.includes('429') || lower.includes('billing')) {
-        userFriendlyMsg = 'AI service is currently at quota limit. Please try again shortly or add a personal API key.';
-      } else if (lower.includes('auth') || lower.includes('permission') || lower.includes('api key') || lower.includes('401') || lower.includes('403')) {
-        userFriendlyMsg = 'AI provider authentication issue. Please check your API key in Profile or try again.';
-      } else if (lower.includes('unavailable') || lower.includes('503') || lower.includes('500') || lower.includes('network') || lower.includes('fetch failed')) {
-        userFriendlyMsg = 'AI service is temporarily busy. Please try again in a few moments.';
-      } else if (errMsg.length < 100) {
-        userFriendlyMsg = errMsg;
+      } else if (
+        lower.includes('quota') ||
+        lower.includes('429') ||
+        lower.includes('rate limit') ||
+        lower.includes('trouble completing')
+      ) {
+        userFriendlyMsg = "We're having trouble completing your request. Please try again shortly.";
+      } else if (
+        lower.includes('auth') ||
+        lower.includes('permission') ||
+        lower.includes('unavailable') ||
+        lower.includes('503') ||
+        lower.includes('500') ||
+        lower.includes('network') ||
+        lower.includes('fetch failed')
+      ) {
+        userFriendlyMsg = 'Codatron AI is temporarily unavailable. Please try again in a moment.';
       }
 
       setGenerationStage(undefined);
@@ -2056,7 +2057,6 @@ function EditorPageContent() {
                       setViewMode('code');
                     }
                   }}
-                  keySource={keySource}
                   modelDisplayName={activeAiDisplayName}
                   onEditMessage={handleEditMessage}
                   onRegenerateMessage={handleRegenerateMessage}

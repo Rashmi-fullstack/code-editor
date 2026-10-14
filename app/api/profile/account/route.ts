@@ -104,11 +104,13 @@ export async function DELETE(request: Request) {
       .delete()
       .eq('user_id', userId);
 
-    // 4. Delete user's BYOK encrypted keys
-    await supabase
-      .from('user_ai_keys')
-      .delete()
-      .eq('user_id', userId);
+    // 4. Clean up any legacy personal keys if present
+    try {
+      await supabase
+        .from('user_ai_keys')
+        .delete()
+        .eq('user_id', userId);
+    } catch { }
 
     // 5. Delete AI token usage records
     await supabase

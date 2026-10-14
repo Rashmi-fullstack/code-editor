@@ -18,7 +18,7 @@ import { resolveAIConfig, trackAiUsage } from '@/lib/ai/router';
 import { DEVELOPER_IDE_CONFIG } from '@/lib/ai/developer-ide-config';
 import { reserveCredit, finalizeCredit } from '@/lib/credits/manager';
 import { determineOperationCost } from '@/lib/credits/config';
-import { logSystemError, logProviderEvent, generateErrorReferenceId, toUserFriendlyErrorMessage } from '@/lib/admin/telemetry';
+import { logSystemError, logProviderEvent, generateErrorReferenceId } from '@/lib/admin/telemetry';
 import type { ProjectFile } from '@/lib/types/database';
 
 export const runtime = 'nodejs';
@@ -30,6 +30,7 @@ export async function POST(
   let projectId = '';
   let currentUserId: string | null = null;
   let currentUserEmail: string | null = null;
+  let isAdmin = false;
   try {
     const params = await context.params;
     projectId = params.projectId;
@@ -88,7 +89,7 @@ export async function POST(
     }
 
     // Canonical server-side admin detection: Only the database profile role is authoritative
-    const isAdmin = userProfile?.role === 'admin';
+    isAdmin = userProfile?.role === 'admin';
 
     // Global Platform Maintenance Mode Check
     try {
@@ -160,9 +161,9 @@ export async function POST(
       );
     }
 
-    // Resolve active AI Configuration (prioritizes BYOK personal key, then platform Qwen3-Coder)
+    // Resolve active centralized platform AI Configuration
     const aiConfig = await resolveAIConfig(supabase, user.id, 'developer');
-    const isByok = aiConfig.keySource === 'byok';
+    const isByok = false;
 
     let currentFiles: ProjectFile[] = body.files && body.files.length > 0 ? body.files : [];
     try {
@@ -448,7 +449,7 @@ export async function POST(
         updatedFiles = Array.from(fileMap.values());
       }
 
-      return NextResponse.json({
+      const responsePayload: Record<string, unknown> = {
         summary: result.summary,
         plan: result.plan ?? [],
         operations: result.operations,
@@ -456,17 +457,23 @@ export async function POST(
         dependencies: result.dependencies ?? [],
         cleanupReport: result.cleanupReport,
         projectName: projectUpdates.name || project.name,
-        keySource: aiConfig.keySource,
         usage: tokenUsage,
-        provider: activeProvider,
-        model: usedModel,
-        isFallback,
-        creditCost: (isByok || isAdmin) ? 0 : effectiveCost,
+        creditCost: isAdmin ? 0 : effectiveCost,
         isAdmin,
-      });
+      };
+
+      // Only expose internal technical telemetry and provider routing to authorized platform administrators
+      if (isAdmin) {
+        responsePayload.provider = activeProvider;
+        responsePayload.model = usedModel;
+        responsePayload.isFallback = isFallback;
+        responsePayload.keySource = aiConfig.keySource;
+      }
+
+      return NextResponse.json(responsePayload);
     } catch (operationError) {
       // 7. On Failure: Release Reserved Credit so user is NOT charged
-      if (!isByok && !isAdmin && !isCreditFinalized && effectiveCost > 0) {
+      if (!isAdmin && !isCreditFinalized && effectiveCost > 0) {
         await finalizeCredit(supabase, user.id, false, effectiveCost);
         isCreditFinalized = true;
       }
@@ -475,96 +482,69 @@ export async function POST(
   } catch (error) {
     console.error('[Generate Route Error]:', error);
     let status = 500;
-    let message = 'Generation failed.';
+    let message = "We couldn't finish generating your changes. Your project is safe, and you can try again.";
 
-    if (error instanceof HuggingFaceQuotaError) {
-      status = 402;
-      message = 'Hugging Face API credits or balance is insufficient. Please check billing or token settings.';
-    } else if (error instanceof HuggingFaceAuthError) {
-      status = 401;
-      message = 'Hugging Face API authentication failed. Check the server-side HF_TOKEN configuration.';
+    if (error instanceof HuggingFaceQuotaError || error instanceof GeminiQuotaError) {
+      status = 429;
+      message = "We're having trouble completing your request. Please try again shortly.";
     } else if (error instanceof HuggingFaceRateLimitError) {
       status = 429;
-      message = 'Hugging Face API rate limit reached. Please retry shortly.';
-    } else if (error instanceof HuggingFaceUnavailableError) {
+      message = "We're having trouble completing your request. Please try again shortly.";
+    } else if (
+      error instanceof HuggingFaceAuthError ||
+      error instanceof HuggingFaceUnavailableError ||
+      error instanceof GeminiUnavailableError
+    ) {
       status = 503;
-      message = 'Hugging Face Inference Provider is temporarily unavailable. Please retry.';
-    } else if (error instanceof GeminiQuotaError) {
-      status = 429;
-      message = 'Gemini API quota has been exceeded for the configured API key/project.';
-    } else if (error instanceof GeminiUnavailableError) {
-      status = 503;
-      message = 'Gemini fallback service is temporarily unavailable. Please retry.';
+      message = 'Codatron AI is temporarily unavailable. Please try again in a moment.';
     } else if (error instanceof MalformedAIResponseError) {
       status = 422;
-      message = 'AI returned an invalid project response. Retrying with a safer generation format.';
+      message = "We couldn't finish generating your changes. Your project is safe, and you can try again.";
     } else if (error instanceof Error) {
-      const rawMsg = error.message;
-      if (
-        rawMsg.includes('402') ||
-        rawMsg.toLowerCase().includes('balance') ||
-        rawMsg.toLowerCase().includes('insufficient')
-      ) {
-        status = 402;
-        message = 'AI service credits or balance is insufficient. Please check billing or token settings.';
-      } else if (
-        rawMsg.includes('401') ||
-        rawMsg.toLowerCase().includes('authentication')
-      ) {
-        status = 401;
-        message = 'AI service authentication failed. Check server-side API key configuration.';
-      } else if (rawMsg.includes('429')) {
+      const rawMsg = error.message.toLowerCase();
+      if (rawMsg.includes('quota') || rawMsg.includes('429') || rawMsg.includes('rate limit')) {
         status = 429;
-        message = 'AI service rate limit reached. Please retry shortly.';
+        message = "We're having trouble completing your request. Please try again shortly.";
       } else if (
         rawMsg.includes('500') ||
         rawMsg.includes('502') ||
         rawMsg.includes('503') ||
         rawMsg.includes('504') ||
-        rawMsg.toLowerCase().includes('unavailable')
+        rawMsg.includes('unavailable') ||
+        rawMsg.includes('fetch failed') ||
+        rawMsg.includes('network')
       ) {
         status = 503;
-        message = 'AI service is temporarily unavailable. Please retry.';
-      } else if (
-        rawMsg.toLowerCase().includes('token limit') ||
-        rawMsg.toLowerCase().includes('incomplete structured response')
-      ) {
-        status = 422;
-        message = 'AI returned an invalid project response. Retrying with a safer generation format.';
-      } else {
-        // Strip raw JSON and request IDs from error message
-        const cleaned = rawMsg
-          .replace(/\{"error":\{.*\}\}/g, '')
-          .replace(/\(request_id:[^)]+\)/g, '')
-          .trim();
-        message = cleaned || 'Generation failed.';
+        message = 'Codatron AI is temporarily unavailable. Please try again in a moment.';
+      } else if (rawMsg.includes('credit') || rawMsg.includes('limit')) {
+        status = 402;
+        message = "You've reached your current AI usage limit. Upgrade your plan to continue building.";
       }
     }
 
-    // Record structured error in admin telemetry asynchronously
+    // Record structured error in admin telemetry asynchronously for Admin Diagnostics
     const finalStatus = typeof status === 'number' && status >= 400 && status < 600 ? status : 500;
     const severity = finalStatus === 429 ? 'WARNING' : finalStatus >= 500 ? 'ERROR' : 'INFO';
     const errorCategory = finalStatus === 429 ? 'RATE_LIMIT' : finalStatus === 401 || finalStatus === 403 ? 'AUTH' : 'AI_PROVIDER';
 
     const errorProvider =
       error instanceof HuggingFaceQuotaError ||
-        error instanceof HuggingFaceAuthError ||
-        error instanceof HuggingFaceRateLimitError ||
-        error instanceof HuggingFaceUnavailableError
+      error instanceof HuggingFaceAuthError ||
+      error instanceof HuggingFaceRateLimitError ||
+      error instanceof HuggingFaceUnavailableError
         ? 'huggingface'
         : error instanceof GeminiQuotaError || error instanceof GeminiUnavailableError
           ? 'google-gemini'
           : 'ai-gateway';
 
     const referenceId = generateErrorReferenceId();
-    const userFacingMessage = `${toUserFriendlyErrorMessage(errorCategory, finalStatus)} (Reference: ${referenceId})`;
 
     logSystemError({
       severity,
       category: errorCategory,
       provider: errorProvider,
       statusCode: finalStatus,
-      message, // Full technical message stored for Admin Diagnostics
+      message: error instanceof Error ? error.message : String(error), // Full technical message stored for Admin Diagnostics
       projectId,
       userId: currentUserId,
       userEmail: currentUserEmail,
@@ -579,11 +559,16 @@ export async function POST(
       status: finalStatus === 429 ? 'degraded' : finalStatus >= 500 ? 'unavailable' : 'degraded',
       eventType: finalStatus === 429 ? 'rate_limit' : 'request_error',
       statusCode: finalStatus,
-      message,
+      message: error instanceof Error ? error.message : String(error),
     }).catch(() => { });
 
     return NextResponse.json(
-      { message: userFacingMessage, error: userFacingMessage, referenceId },
+      {
+        message,
+        status: finalStatus,
+        referenceId,
+        ...(isAdmin ? { debugMessage: error instanceof Error ? error.message : String(error) } : {}),
+      },
       { status: finalStatus }
     );
   }

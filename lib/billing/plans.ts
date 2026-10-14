@@ -53,7 +53,7 @@ export const FALLBACK_PLANS: SubscriptionPlan[] = [
       'Up to 50 AI generation & refactoring operations',
       'High-priority generation queues & low latency',
       'Autonomous Product Manager planning & roadmaps',
-      'Custom BYOK personal API key integration',
+      'Full-stack autonomous AI generation & refactoring',
       'Unlimited manual editing, preview & live HMR',
     ] as any,
     razorpay_plan_id: null,

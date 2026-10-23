@@ -78,7 +78,20 @@ type AgentResponse = {
   isFallback?: boolean;
 };
 
-export type ProjectStatus = 'loading' | 'empty' | 'ready' | 'error' | 'not_found' | 'no_project';
+export type ProjectStatus =
+  | 'NO_PROJECT_SELECTED'
+  | 'PROJECT_LIST_EMPTY'
+  | 'PROJECT_LOADING'
+  | 'PROJECT_READY'
+  | 'PROJECT_NOT_FOUND'
+  | 'PROJECT_LOAD_ERROR'
+  | 'UNAUTHENTICATED'
+  | 'loading'
+  | 'empty'
+  | 'ready'
+  | 'error'
+  | 'not_found'
+  | 'no_project';
 
 export type EditorLifecycleState =
   | 'ROUTE_LOADING'
@@ -119,7 +132,9 @@ function EditorPageContent() {
 
   // Project and files state
   const [project, setProject] = useState<Project | null>(null);
-  const [projectStatus, setProjectStatus] = useState<ProjectStatus>('loading');
+  const [projectStatus, setProjectStatus] = useState<ProjectStatus>(() => {
+    return queryPid ? 'PROJECT_LOADING' : 'NO_PROJECT_SELECTED';
+  });
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activePath, setActivePath] = useState('');
@@ -210,9 +225,11 @@ function EditorPageContent() {
     webcontainerManager.logInternal('EDITOR', detail ? `${nextState} — ${detail}` : nextState);
   }, []);
 
+  const isCreatingProjectRef = useRef(false);
+
   const retryHydration = useCallback(() => {
     webcontainerManager.logInternal('PROJECT', 'retry requested');
-    setProjectStatus('loading');
+    setProjectStatus('PROJECT_LOADING');
     hydratedTargetRef.current = null;
     loadSeqRef.current += 1;
     setReloadTrigger((prev) => prev + 1);
@@ -384,6 +401,8 @@ function EditorPageContent() {
       setWorkspace(newWs);
       if (project) {
         router.replace(`/editor?project=${project.id}&view=${newWs}`, { scroll: false });
+      } else {
+        router.replace(`/editor?view=${newWs}`, { scroll: false });
       }
     },
     [project, router]
@@ -499,6 +518,7 @@ function EditorPageContent() {
     webcontainerManager.logInternal('EDITOR', 'route opened');
 
     if (!isLoading && !user && process.env.NODE_ENV === 'production') {
+      setProjectStatus('UNAUTHENTICATED');
       router.replace('/login?next=/editor');
       return;
     }
@@ -511,86 +531,110 @@ function EditorPageContent() {
     const currentSeq = ++loadSeqRef.current;
     let active = true;
 
-    const targetKey = `${user ? user.id : 'anon'}_${queryPid || 'default'}`;
+    const targetKey = `${user ? user.id : 'anon'}_${queryPid || 'empty'}`;
 
     if (queryView && workspace !== queryView) {
       setWorkspace(queryView);
     }
 
-    if (hydratedTargetRef.current === targetKey && project !== null) {
+    if (hydratedTargetRef.current === targetKey && (project !== null || !queryPid)) {
       return;
     }
 
-    // Safety timeout: 10 seconds per Section 7 (Never leave user stuck on infinite spinner)
-    const timeoutId = setTimeout(() => {
-      if (active && currentSeq === loadSeqRef.current && projectStatus === 'loading') {
-        const cachedFilesStr = queryPid ? localStorage.getItem(`codatron_files_${queryPid}`) : null;
-        if (cachedFilesStr) {
-          try {
-            const parsed = JSON.parse(cachedFilesStr);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setFiles(parsed);
-              setProjectStatus('ready');
-              transitionLifecycle('EDITOR_READY', 'Restored from local cache on timeout');
-              toast.info('Loaded cached project version.', { id: 'cache-fallback' });
-              return;
-            }
-          } catch { }
+    // Safety timeout: Only scheduled when fetching a real project ID to prevent hanging
+    let timeoutId: NodeJS.Timeout | undefined;
+    if (queryPid && isValidUuid(queryPid)) {
+      timeoutId = setTimeout(() => {
+        if (active && currentSeq === loadSeqRef.current && (projectStatus === 'loading' || projectStatus === 'PROJECT_LOADING')) {
+          const cachedFilesStr = localStorage.getItem(`codatron_files_${queryPid}`);
+          if (cachedFilesStr) {
+            try {
+              const parsed = JSON.parse(cachedFilesStr);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setFiles(parsed);
+                setProjectStatus('PROJECT_READY');
+                transitionLifecycle('EDITOR_READY', 'Restored from local cache on timeout');
+                toast.info('Loaded cached project version.', { id: 'cache-fallback' });
+                return;
+              }
+            } catch { }
+          }
+          setProjectStatus('PROJECT_LOAD_ERROR');
+          transitionLifecycle('FAILED', 'Project hydration timed out after 10s');
+          webcontainerManager.logInternal('PROJECT', 'hydration failed (timeout after 10s)');
         }
-        setProjectStatus('error');
-        transitionLifecycle('FAILED', 'Project hydration timed out after 10s');
-        webcontainerManager.logInternal('PROJECT', 'hydration failed (timeout after 10s)');
-      }
-    }, 10000);
+      }, 10000);
+    }
 
     async function loadInitialProject() {
+      // 1. NO_PROJECT_SELECTED: User opened an IDE without a project ID
+      if (!queryPid) {
+        hydratedTargetRef.current = targetKey;
+        setProject(null);
+        setFiles([]);
+        setOpenTabs([]);
+        setActivePath('');
+        setConversation([]);
+        setProductPlan(null);
+        setProjectStatus('NO_PROJECT_SELECTED');
+        transitionLifecycle('EDITOR_READY', 'Empty workspace ready');
+        webcontainerManager.logInternal('PROJECT', 'empty workspace (no project selected)');
+        return;
+      }
+
       perfTimersRef.current.projectFetchStart = Date.now();
-      transitionLifecycle('PROJECT_LOADING', `Project ${queryPid || 'local'}`);
-      webcontainerManager.logInternal('PROJECT', `loading project: ${queryPid || 'local'}`);
+      transitionLifecycle('PROJECT_LOADING', `Project ${queryPid}`);
+      webcontainerManager.logInternal('PROJECT', `loading project: ${queryPid}`);
 
-      // 1. Optimistic Hydration: If cached data exists for this project, restore in 0ms!
-      if (queryPid) {
-        try {
-          const cachedFiles = localStorage.getItem(`codatron_files_${queryPid}`);
-          const cachedProject = localStorage.getItem(`codatron_project_${queryPid}`);
-          const cachedChat = localStorage.getItem(`codatron_chat_${queryPid}`);
-          if (cachedFiles) {
-            const parsed = JSON.parse(cachedFiles);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setFiles(parsed);
-              setProjectStatus('ready');
-              transitionLifecycle('EDITOR_READY', 'Optimistic cache hit');
-              const initial =
-                parsed.find((file: ProjectFile) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
-                parsed.find((file: ProjectFile) => !file.is_folder);
-              if (initial) {
-                setOpenTabs((prev) => (prev.length > 0 ? prev : [initial.path]));
-                setActivePath((prev) => prev || initial.path);
-                setDrafts((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
-                setSavedContents((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
-              }
+      // 2. Optimistic Hydration: If cached data exists for this project, restore in 0ms!
+      try {
+        const cachedFiles = localStorage.getItem(`codatron_files_${queryPid}`);
+        const cachedProject = localStorage.getItem(`codatron_project_${queryPid}`);
+        const cachedChat = localStorage.getItem(`codatron_chat_${queryPid}`);
+        if (cachedFiles) {
+          const parsed = JSON.parse(cachedFiles);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setFiles(parsed);
+            setProjectStatus('PROJECT_READY');
+            transitionLifecycle('EDITOR_READY', 'Optimistic cache hit');
+            const initial =
+              parsed.find((file: ProjectFile) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
+              parsed.find((file: ProjectFile) => !file.is_folder);
+            if (initial) {
+              setOpenTabs((prev) => (prev.length > 0 ? prev : [initial.path]));
+              setActivePath((prev) => prev || initial.path);
+              setDrafts((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
+              setSavedContents((prev) => (initial.path in prev ? prev : { ...prev, [initial.path]: initial.content }));
             }
           }
-          if (cachedProject) {
-            const parsedProj = JSON.parse(cachedProject);
-            if (parsedProj && parsedProj.id === queryPid) {
-              setProject(parsedProj);
-            }
+        }
+        if (cachedProject) {
+          const parsedProj = JSON.parse(cachedProject);
+          if (parsedProj && parsedProj.id === queryPid) {
+            setProject(parsedProj);
           }
-          if (cachedChat) {
-            const parsedChat = JSON.parse(cachedChat);
-            if (Array.isArray(parsedChat) && parsedChat.length > 0) {
-              setConversation(parsedChat);
-            }
+        }
+        if (cachedChat) {
+          const parsedChat = JSON.parse(cachedChat);
+          if (Array.isArray(parsedChat) && parsedChat.length > 0) {
+            setConversation(parsedChat);
           }
-        } catch { }
+        }
+      } catch { }
+
+      // 3. Invalid project ID validation
+      if (queryPid !== 'local-project' && !isValidUuid(queryPid)) {
+        setProject(null);
+        setFiles([]);
+        setOpenTabs([]);
+        setActivePath('');
+        setProjectStatus('PROJECT_NOT_FOUND');
+        transitionLifecycle('FAILED', `Invalid project ID: ${queryPid}`);
+        webcontainerManager.logInternal('PROJECT', `invalid project id: ${queryPid}`);
+        return;
       }
 
-      if (!project) {
-        setProjectStatus((prev) => (prev === 'ready' ? 'ready' : 'loading'));
-      }
-
-      if (!user || queryPid === 'local-project' || (queryPid && !isValidUuid(queryPid))) {
+      if (queryPid === 'local-project' || !user) {
         // Local offline development mode
         const localPid = 'local-project';
         let initialFiles: ProjectFile[] = [];
@@ -635,7 +679,7 @@ function EditorPageContent() {
         });
 
         setFiles(initialFiles);
-        setProjectStatus(initialFiles.length > 0 ? 'ready' : 'empty');
+        setProjectStatus('PROJECT_READY');
         transitionLifecycle('PROJECT_HYDRATED', 'Local project');
         transitionLifecycle('EDITOR_READY', 'Local files loaded');
 
@@ -654,74 +698,61 @@ function EditorPageContent() {
         return;
       }
 
-      // Authenticated User: Fetch Project & Files in parallel
+      // 4. Authenticated User: Fetch requested project and files by ID
       try {
-        let current: Project | null = null;
-        let projectFiles: ProjectFile[] = [];
+        const [fetchedProject, fetchedFiles] = await Promise.all([
+          getProjectById(supabase, queryPid),
+          getProjectFiles(supabase, queryPid),
+        ]);
+        if (!active || currentSeq !== loadSeqRef.current) return;
 
-        if (queryPid && isValidUuid(queryPid)) {
-          const [fetchedProject, fetchedFiles] = await Promise.all([
-            getProjectById(supabase, queryPid),
-            getProjectFiles(supabase, queryPid),
-          ]);
-          if (!active || currentSeq !== loadSeqRef.current) return;
-          if (fetchedProject.data) {
-            current = fetchedProject.data;
-            perfTimersRef.current.projectFetchEnd = Date.now();
-            webcontainerManager.logInternal('PROJECT', 'project metadata loaded');
-            if (fetchedFiles.data) {
-              projectFiles = fetchedFiles.data;
-              perfTimersRef.current.filesFetchEnd = Date.now();
-              webcontainerManager.logInternal('PROJECT', `files loaded: ${projectFiles.length} files`);
-            }
-          } else {
-            // Explicit PROJECT_NOT_FOUND state for non-existent requested project
-            setProject(null);
-            setFiles([]);
-            setOpenTabs([]);
-            setActivePath('');
-            setProjectStatus('not_found');
-            transitionLifecycle('FAILED', `Project ${queryPid} not found`);
-            webcontainerManager.logInternal('PROJECT', `project not found: ${queryPid}`);
-            return;
-          }
-        } else {
-          // No project ID in URL: Check the user's project list
-          const projects = await getProjects(supabase, user.id);
-          if (!active || currentSeq !== loadSeqRef.current) return;
-          if (!projects.data || projects.data.length === 0) {
-            // User has 0 projects: First-time user empty state (NO_PROJECT)
-            setProject(null);
-            setFiles([]);
-            setOpenTabs([]);
-            setActivePath('');
-            setConversation([]);
-            setProjectStatus('no_project');
-            transitionLifecycle('EDITOR_READY', 'First-time user (no projects)');
-            webcontainerManager.logInternal('PROJECT', 'no projects found (empty state)');
-            return;
-          }
-
-          current = projects.data[0];
-          const fetchedFiles = await getProjectFiles(supabase, current.id);
-          if (!active || currentSeq !== loadSeqRef.current) return;
-          projectFiles = fetchedFiles.data ?? [];
-        }
-
-        if (!current) {
+        if (fetchedProject.error) {
+          const errMsg = fetchedProject.error.message || '';
+          const hasNotFoundCode = 'code' in fetchedProject.error && (fetchedProject.error as { code?: string }).code === 'PGRST116';
+          const isNotFound = hasNotFoundCode || errMsg.toLowerCase().includes('not found');
           setProject(null);
           setFiles([]);
-          setProjectStatus('no_project');
-          transitionLifecycle('EDITOR_READY', 'No project loaded');
+          setOpenTabs([]);
+          setActivePath('');
+          if (isNotFound) {
+            setProjectStatus('PROJECT_NOT_FOUND');
+            transitionLifecycle('FAILED', `Project ${queryPid} not found`);
+          } else {
+            setProjectStatus('PROJECT_LOAD_ERROR');
+            transitionLifecycle('FAILED', errMsg);
+            toast.error("We couldn't load this project right now.", { id: 'project-load-err' });
+          }
           return;
         }
 
-        // Synchronize URL and workspace view mode
+        if (!fetchedProject.data) {
+          setProject(null);
+          setFiles([]);
+          setOpenTabs([]);
+          setActivePath('');
+          setProjectStatus('PROJECT_NOT_FOUND');
+          transitionLifecycle('FAILED', `Project ${queryPid} not found`);
+          webcontainerManager.logInternal('PROJECT', `project not found: ${queryPid}`);
+          return;
+        }
+
+        // Ownership and access verification: do not expose whether other user's private project exists
+        if (user && fetchedProject.data.user_id !== user.id && !isUserAdmin) {
+          setProject(null);
+          setFiles([]);
+          setOpenTabs([]);
+          setActivePath('');
+          setProjectStatus('PROJECT_NOT_FOUND');
+          transitionLifecycle('FAILED', `Access denied to project ${queryPid}`);
+          webcontainerManager.logInternal('PROJECT', `access denied: ${queryPid}`);
+          return;
+        }
+
+        const current = fetchedProject.data;
+        const projectFiles = fetchedFiles.data ?? [];
+
         const activeView = (queryView === 'product' || queryView === 'developer') ? queryView : 'developer';
         setWorkspace(activeView);
-        if (queryPid !== current.id || queryView !== activeView) {
-          router.replace(`/editor?project=${current.id}&view=${activeView}`, { scroll: false });
-        }
 
         setProject(current);
         setProductPlan(null);
@@ -736,16 +767,10 @@ function EditorPageContent() {
         transitionLifecycle('PROJECT_HYDRATED', `Project ${current.id}`);
         webcontainerManager.logInternal('PROJECT', 'hydration complete');
 
-        if (projectFiles.length === 0) {
-          setProjectStatus('empty');
-          setOpenTabs([]);
-          setActivePath('');
-          transitionLifecycle('EDITOR_READY', 'Empty project');
-        } else {
-          setProjectStatus('ready');
-          transitionLifecycle('EDITOR_READY', `${projectFiles.length} files ready`);
-          webcontainerManager.logInternal('EDITOR', 'editor ready');
+        setProjectStatus('PROJECT_READY');
+        transitionLifecycle('EDITOR_READY', `${projectFiles.length} files ready`);
 
+        if (projectFiles.length > 0) {
           const initial =
             projectFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
             projectFiles.find((file) => !file.is_folder);
@@ -823,18 +848,18 @@ function EditorPageContent() {
         hydratedTargetRef.current = targetKey;
       } catch (err) {
         if (!active || currentSeq !== loadSeqRef.current) return;
-        setProjectStatus('error');
+        setProjectStatus('PROJECT_LOAD_ERROR');
         transitionLifecycle('FAILED', err instanceof Error ? err.message : 'Hydration error');
         webcontainerManager.logInternal('PROJECT', 'hydration failed');
         console.error('Project hydration error:', err);
-        toast.error("We're taking a little longer to load your project.", { id: 'project-load-err' });
+        toast.error("We couldn't load this project right now.", { id: 'project-load-err' });
       }
     }
 
     void loadInitialProject();
     return () => {
       active = false;
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [isLoading, user?.id, queryPid, queryView, reloadTrigger, router, supabase, persistFilesToCache, transitionLifecycle]);
 
@@ -906,7 +931,7 @@ function EditorPageContent() {
 
   // Auto-start the real WebContainer runtime in background (Independent of Editor Ready)
   useEffect(() => {
-    if (!project || projectStatus !== 'ready' || files.length === 0 || isWorking) return;
+    if (!project || (projectStatus !== 'ready' && projectStatus !== 'PROJECT_READY') || files.length === 0 || isWorking) return;
     const signature = files
       .filter((file) => !file.is_folder)
       .map((file) => `${file.path}:${file.content?.length ?? 0}:${file.updated_at ?? ''}`)
@@ -1181,6 +1206,8 @@ function EditorPageContent() {
 
     let targetProject = project;
     if (!targetProject) {
+      if (isCreatingProjectRef.current) return;
+      isCreatingProjectRef.current = true;
       setIsWorking(true);
       setGenerationStage('Creating your first project…');
       const derivedName = effectivePrompt.slice(0, 32).trim() || 'My First Project';
@@ -1189,6 +1216,7 @@ function EditorPageContent() {
         mode: 'developer',
         framework: 'nextjs',
       });
+      isCreatingProjectRef.current = false;
       if (createRes.error || !createRes.data) {
         toast.error(createRes.error?.message || 'Could not create project');
         setIsWorking(false);
@@ -1197,7 +1225,7 @@ function EditorPageContent() {
       }
       targetProject = createRes.data;
       setProject(targetProject);
-      setProjectStatus('empty');
+      setProjectStatus('PROJECT_READY');
       router.replace(`/editor?project=${targetProject.id}&view=${workspace}`, { scroll: false });
     }
 
@@ -1906,10 +1934,18 @@ function EditorPageContent() {
 
   const displayProject: Project = useMemo(() => {
     if (project) return project;
+    const isNoProject =
+      projectStatus === 'NO_PROJECT_SELECTED' ||
+      projectStatus === 'PROJECT_LIST_EMPTY' ||
+      projectStatus === 'no_project';
     return {
-      id: queryPid || 'local-project',
+      id: queryPid || 'new-project',
       user_id: user?.id || 'anonymous',
-      name: projectStatus === 'no_project' ? 'New Project' : queryPid ? 'Project Workspace' : 'Local Project',
+      name: isNoProject
+        ? (workspace === 'product' ? 'Product Planner' : 'New Project')
+        : queryPid
+        ? 'Project Workspace'
+        : 'New Project',
       description: '',
       prompt: null,
       framework: 'nextjs',
@@ -1917,7 +1953,7 @@ function EditorPageContent() {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-  }, [project, projectStatus, queryPid, user?.id]);
+  }, [project, projectStatus, queryPid, user?.id, workspace]);
 
   return (
     <main className="flex h-screen flex-col bg-[#02060f] text-slate-100 overflow-hidden select-none">
@@ -1952,7 +1988,7 @@ function EditorPageContent() {
 
       {/* Main Workspace: Dedicated Product Manager Workspace OR Developer IDE */}
       {workspace === 'product' ? (
-        projectStatus === 'loading' && !project ? (
+        (projectStatus === 'loading' || projectStatus === 'PROJECT_LOADING') && !project ? (
           <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
             <div className="relative flex items-center justify-center">
               <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shadow-[0_0_25px_rgba(99,102,241,0.2)]">
@@ -1964,7 +2000,7 @@ function EditorPageContent() {
               <p className="text-xs text-slate-400">Loading your workspace...</p>
             </div>
           </div>
-        ) : projectStatus === 'not_found' && !project ? (
+        ) : (projectStatus === 'not_found' || projectStatus === 'PROJECT_NOT_FOUND') && !project ? (
           <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
             <div className="flex flex-col items-center gap-3 text-center px-4 max-w-sm">
               <div className="h-10 w-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
@@ -1979,7 +2015,7 @@ function EditorPageContent() {
               </div>
             </div>
           </div>
-        ) : projectStatus === 'error' && !project ? (
+        ) : (projectStatus === 'error' || projectStatus === 'PROJECT_LOAD_ERROR') && !project ? (
           <div className="flex-1 flex flex-col items-center justify-center bg-[#070913] text-slate-400 gap-4 select-none">
             <div className="flex flex-col items-center gap-3 text-center px-4 max-w-sm">
               <div className="h-10 w-10 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
@@ -2010,6 +2046,11 @@ function EditorPageContent() {
             onFilesUpdated={handleFilesUpdatedFromPM}
             onSwitchToDeveloper={handleSwitchToDeveloper}
             onRenameWorkspace={handleRenameWorkspace}
+            onProjectCreated={(newProject) => {
+              setProject(newProject);
+              setProjectStatus('PROJECT_READY');
+              router.replace(`/editor?project=${newProject.id}&view=product`, { scroll: false });
+            }}
           />
         )
       ) : (
@@ -2061,7 +2102,7 @@ function EditorPageContent() {
                   onEditMessage={handleEditMessage}
                   onRegenerateMessage={handleRegenerateMessage}
                   isChatLoading={isChatLoading}
-                  isNoProject={projectStatus === 'no_project'}
+                  isNoProject={projectStatus === 'NO_PROJECT_SELECTED' || projectStatus === 'PROJECT_LIST_EMPTY' || projectStatus === 'no_project' || !project}
                 />
               </div>
             )}
@@ -2104,7 +2145,7 @@ function EditorPageContent() {
               {/* Center Content: Empty Canvas OR Code / Preview / Split */}
               <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
                 {/* PROJECT LOADING (Non-blocking in-editor status) */}
-                {projectStatus === 'loading' && files.length === 0 && (
+                {(projectStatus === 'loading' || projectStatus === 'PROJECT_LOADING') && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/10 border border-indigo-500/20 shadow-[0_0_25px_rgba(99,102,241,0.25)]">
@@ -2119,7 +2160,7 @@ function EditorPageContent() {
                 )}
 
                 {/* PROJECT NOT FOUND */}
-                {projectStatus === 'not_found' && files.length === 0 && (
+                {(projectStatus === 'not_found' || projectStatus === 'PROJECT_NOT_FOUND') && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
@@ -2139,7 +2180,7 @@ function EditorPageContent() {
                 )}
 
                 {/* PROJECT ERROR / TIMEOUT (Graceful non-blocking recovery) */}
-                {projectStatus === 'error' && files.length === 0 && (
+                {(projectStatus === 'error' || projectStatus === 'PROJECT_LOAD_ERROR') && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#070913] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
@@ -2161,17 +2202,17 @@ function EditorPageContent() {
                   </div>
                 )}
 
-                {/* FIRST-TIME USER EMPTY STATE (When user has no projects yet) */}
-                {projectStatus === 'no_project' && files.length === 0 && (
+                {/* EMPTY WORKSPACE (When no project is selected or user has no projects yet) */}
+                {(projectStatus === 'NO_PROJECT_SELECTED' || projectStatus === 'PROJECT_LIST_EMPTY' || projectStatus === 'no_project' || !project) && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">
                         <Sparkles className="h-7 w-7 text-indigo-400" />
                       </div>
                       <div>
-                        <h3 className="text-base font-bold text-white">Start building with AI</h3>
+                        <h3 className="text-base font-bold text-white">Start building with Codatron AI</h3>
                         <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
-                          You don&apos;t have a project yet. Describe what you&apos;d like to build in the AI Workspace on the left, and Codatron will create your first project and live preview automatically.
+                          Describe the application you want to create, and Codatron will help you build it.
                         </p>
                       </div>
                     </div>
@@ -2179,7 +2220,7 @@ function EditorPageContent() {
                 )}
 
                 {/* PREVIEW EMPTY CANVAS (For existing project with 0 files) */}
-                {projectStatus !== 'loading' && projectStatus !== 'error' && projectStatus !== 'not_found' && projectStatus !== 'no_project' && viewMode === 'preview' && files.length === 0 && (
+                {project !== null && (projectStatus === 'ready' || projectStatus === 'PROJECT_READY' || projectStatus === 'empty') && viewMode === 'preview' && files.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
                     <div className="max-w-md mx-auto space-y-4">
                       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">

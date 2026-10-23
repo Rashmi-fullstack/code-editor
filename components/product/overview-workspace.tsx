@@ -485,12 +485,10 @@ export function OverviewWorkspace({
 
                   <div className="space-y-2 max-w-md mx-auto">
                     <h3 className="text-lg font-bold text-white tracking-tight">
-                      What are you planning to build?
+                      Plan your next project
                     </h3>
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      Describe your product idea, audience, or core requirements.
-                      Codatron will interpret your request and generate a complete,
-                      structured product blueprint.
+                      Describe your idea to create a product roadmap, define features, and organize development tasks.
                     </p>
                   </div>
                 </div>
@@ -738,7 +736,11 @@ export function OverviewWorkspace({
                   }}
                   disabled={isGenerating}
                   rows={2}
-                  placeholder="Describe your product idea or refinement… (Press Enter to send, Shift+Enter for new line)"
+                  placeholder={
+                    isGenerating
+                      ? 'Planning…'
+                      : 'Describe your product idea... (Press Enter to send, Shift+Enter for new line)'
+                  }
                   className="w-full resize-none bg-transparent px-4 py-3 text-xs text-white placeholder:text-slate-500 focus:outline-none leading-relaxed"
                 />
 

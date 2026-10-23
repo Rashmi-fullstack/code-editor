@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Compass,
   Lightbulb,
@@ -49,6 +49,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { createClient } from '@/lib/client';
+import { useAuth } from '@/components/auth-provider';
+import { createProjectWithMode } from '@/lib/db/projects';
 import { saveProductPlanToDb, isRealPlan } from '@/lib/db/product';
 import type { ProductPlan, DevelopmentTask } from '@/lib/ai/product-planner';
 import type { Project, ProjectFile } from '@/lib/types/database';
@@ -82,6 +84,7 @@ export interface ProductWorkspaceProps {
   onFilesUpdated: (newFiles: ProjectFile[], dependencies?: Array<{ name: string; version: string }>) => void;
   onSwitchToDeveloper: (targetFilePath?: string) => void;
   onRenameWorkspace?: (newName: string) => Promise<void> | void;
+  onProjectCreated?: (newProject: Project) => void;
 }
 
 interface SidebarGroup {
@@ -104,7 +107,10 @@ export function ProductWorkspace({
   onPlanGenerated,
   onRenameWorkspace,
   onSwitchToDeveloper,
+  onProjectCreated,
 }: ProductWorkspaceProps) {
+  const { user } = useAuth();
+  const isCreatingProjectRef = useRef(false);
   const [activeSection, setActiveSection] = useState<PmSection>('overview');
   const [overviewResetKey, setOverviewResetKey] = useState(0);
   const [idea, setIdea] = useState('');
@@ -245,16 +251,52 @@ export function ProductWorkspace({
   // Generate / Evolve complete product specification
   const handleGeneratePlan = async (customPrompt?: string) => {
     const promptToSend = (customPrompt || idea).trim();
-    if (!project || !promptToSend) {
+    if (!promptToSend) {
       toast.error('Please describe your product idea or instruction first.');
       return;
     }
+
+    let currentProject = project;
+    if (!currentProject) {
+      if (isCreatingProjectRef.current) return;
+      isCreatingProjectRef.current = true;
+      setIsGeneratingPlan(true);
+      setGenerationStatus('ANALYZING');
+      setGenerationError(null);
+
+      try {
+        const derivedName = promptToSend.slice(0, 32).trim() || 'My Product Plan';
+        const supabase = createClient();
+        const createRes = await createProjectWithMode(supabase, user ? user.id : 'anon', {
+          name: derivedName,
+          mode: 'product',
+        });
+
+        if (createRes.error || !createRes.data) {
+          isCreatingProjectRef.current = false;
+          setIsGeneratingPlan(false);
+          setGenerationStatus('FAILED');
+          toast.error(createRes.error?.message || 'Could not create product project');
+          return;
+        }
+
+        currentProject = createRes.data;
+        onProjectCreated?.(currentProject);
+      } catch (createErr) {
+        isCreatingProjectRef.current = false;
+        setIsGeneratingPlan(false);
+        setGenerationStatus('FAILED');
+        toast.error('Could not initialize project for roadmap');
+        return;
+      }
+    }
+
     setIsGeneratingPlan(true);
     setGenerationStatus('ANALYZING');
     setGenerationError(null);
 
     try {
-      const res = await fetch(`/api/projects/${project.id}/plan`, {
+      const res = await fetch(`/api/projects/${currentProject.id}/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -295,6 +337,7 @@ export function ProductWorkspace({
       toast.error(msg);
       throw err;
     } finally {
+      isCreatingProjectRef.current = false;
       setIsGeneratingPlan(false);
     }
   };

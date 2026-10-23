@@ -325,11 +325,11 @@ export function AIWorkspace({
                 <span className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-600 text-white">
                   <Sparkles className="h-3 w-3" />
                 </span>
-                <span>{isNoProject ? 'Start building with AI' : 'AI Application Builder'}</span>
+                <span>{isNoProject ? 'Start building with Codatron AI' : 'AI Application Builder'}</span>
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
                 {isNoProject
-                  ? "You don't have a project yet. Describe what you'd like to build and Codatron will create your first project."
+                  ? 'Describe the application you want to create, and Codatron will help you build it.'
                   : 'Describe what you want to build. Codatron builds the full experience, creates responsive layouts, adds real visual assets, and prepares your live preview automatically.'}
               </p>
             </div>
@@ -770,6 +770,8 @@ export function AIWorkspace({
             placeholder={
               isWorking
                 ? 'Building your application…'
+                : isNoProject || conversation.length === 0
+                ? 'Describe the app you want to build...'
                 : 'Describe what you want to build or change…'
             }
             rows={2}
